@@ -29,7 +29,7 @@ from datetime import date
 from .cache import banner
 from .classify import (ASIDE, NO_PIPELINE, NO_PULL_REQUEST_TRIGGER,
                        PRECEDENCE, PR_SCOPE, REPO_SCOPE, contributor_runnable,
-                       forge_token_split, primary_of)
+                       forge_token_split, primary_of, tests_unprivileged)
 from .structure import parser_available
 
 PROFILE_NAME = "ci_profile.json"
@@ -67,8 +67,8 @@ COMMENT = (
     "present; the ladder is acts-on-forge > writes-outward > read-credential > "
     "special-env > self-contained > no-pull-request-trigger > no-pipeline, and "
     "thin-wrapper, uses-pull-request-target, uses-forge-token, "
-    "assumes-toolchain and the credentials-* axis are reported alongside it "
-    "rather than on it. "
+    "assumes-toolchain, the credentials-* axis and the test-step-* "
+    "determination are reported alongside it rather than on it. "
     "no-pull-request-trigger is a repository with pipelines that no pull "
     "request sets off, kept apart from no-pipeline, which has none at all. "
     "assumes-toolchain is an environment dependency and not a privilege "
@@ -96,6 +96,22 @@ COMMENT = (
     "scope: the self-contained repositories plus those whose privilege is "
     "entirely reporting, with the unclear count as the uncertainty band around "
     "it. That band is wide, and EXPERIMENTS.md records why it did not narrow. "
+    "The test-step-* determination asks a narrower question than the "
+    "credentials-* axis: not whether every privileged step in the scope is "
+    "droppable, but whether the step that invokes the test suite consumes a "
+    "credential, which is what a contributor wanting a pre-flight signal needs "
+    "to know. test-step-unprivileged where an identified test invocation has "
+    "no credential available to it, counting a credential reachable by "
+    "inheritance from a workflow-level or job-level `env:` (or GitLab's global "
+    "or job `variables:`) as available, and counting the forge's own "
+    "auto-minted token as no credential, consistently with uses-forge-token; "
+    "test-step-privileged where one is available, which includes the case "
+    "where whether one is reachable could not be determined, since the "
+    "flattering answer must not win by default; test-step-unidentified where "
+    "no command form the tool recognises as a test invocation was found, which "
+    "is a statement about what the configuration says and not about the "
+    "project. `tests_unprivileged` derives the figure that determination "
+    "exists for, per scope, with test-step-unidentified as its band. "
     "A signal can be missed or over-claimed, so `signals` carries the "
     "evidence. Repositories under `unknown` could not be read and are excluded "
     "from every count, never counted as no-pipeline. `other_ci` names CI "
@@ -127,6 +143,11 @@ def write(path, repos, unknown, source=None, partial=False, limited=False,
             scope: dict(zip(("repos", "self_contained", "reporting_only",
                              "unclear"),
                             contributor_runnable(repos, scope)))
+            for scope in (PR_SCOPE, REPO_SCOPE)
+        },
+        "tests_unprivileged": {
+            scope: dict(zip(("repos", "privileged", "unidentified"),
+                            tests_unprivileged(repos, scope)))
             for scope in (PR_SCOPE, REPO_SCOPE)
         },
         "repos": dict(sorted(repos.items(), key=lambda kv: kv[0].lower())),
@@ -192,6 +213,18 @@ def report_scope(repos, unknown, scope, width, log=print):
         "step each".format(unclear))
     log("      that was recognised as neither, which is what holds them out "
         "of the figure")
+    # The narrower figure, printed the same way and for the same reason: the
+    # count of scopes whose test invocation nothing could find belongs to the
+    # answer, because a test suite that could not be found is not one that
+    # needs nothing.
+    clean, privileged, unidentified = tests_unprivileged(repos, scope)
+    log("  {:<{w}}  {:>5}".format(
+        "with a test suite that runs unprivileged", clean, w=width))
+    log("    vs {} whose test step has a credential available to it, "
+        "inherited".format(privileged))
+    log("       environment included, and {} where no test invocation could be"
+        .format(unidentified))
+    log("       identified, which is this figure's band")
 
 
 def report(before, repos, unknown, cache=None, source=None, log=print):

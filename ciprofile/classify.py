@@ -74,8 +74,9 @@ from .rules import (ACTS_ON_FORGE, ASIDE, ASSUMES_TOOLCHAIN,
                     CREDENTIALS_UNCLEAR, GROUPS, NO_PIPELINE,
                     NO_PULL_REQUEST_TRIGGER, PRECEDENCE, PULL_REQUEST_TARGET,
                     READ_CREDENTIAL, SELF_CONTAINED, SPECIAL_ENV,
-                    THIN_WRAPPER, TOOLCHAIN_PREFIX, USES_FORGE_TOKEN,
-                    WRITES_OUTWARD)
+                    TEST_STEP_PRIVILEGED, TEST_STEP_UNIDENTIFIED,
+                    TEST_STEP_UNPRIVILEGED, THIN_WRAPPER, TOOLCHAIN_PREFIX,
+                    USES_FORGE_TOKEN, WRITES_OUTWARD)
 from .structure import commands, in_pull_request_scope
 
 # The two profiles every repository carries. PR_SCOPE is the one to quote.
@@ -134,6 +135,12 @@ def _scope_profile(per_file, paths, absent):
         purpose = rules.credentials_purpose(signals)
         if purpose:
             flags.append(purpose)
+        # And the narrower question, over the same union: whether the step that
+        # invokes the test suite consumes a credential. Always one of three
+        # values where the scope holds a pipeline file, because "no test
+        # invocation could be identified" is one of them; absent only for the
+        # two empty scopes, where there is no step to ask about.
+        flags.append(rules.test_step_privilege(signals))
 
     order = PRECEDENCE + ASIDE
     flags.sort(key=order.index)
@@ -231,6 +238,32 @@ def contributor_runnable(repos, scope=PR_SCOPE):
     return plain + reporting, plain, reporting, unclear
 
 
+def tests_unprivileged(repos, scope=PR_SCOPE):
+    """(unprivileged, privileged, unidentified).
+
+    The figure the test-step determination exists for, beside the
+    contributor-runnable one above and answering a narrower question: how many
+    repositories have a test suite that runs without the project's secrets,
+    whatever the steps around it need. Where contributor_runnable() needs every
+    privileged step in a scope to be recognised as reporting, this needs only
+    the test step to be clean, so it is reachable in cases that axis leaves
+    unclear.
+
+    All three are returned and the three sum to the scopes holding a pipeline
+    file, because `unidentified` is the band around the first figure in exactly
+    the way `unclear` is the band around contributor_runnable()'s: a test suite
+    this could not find is not a test suite that needs nothing.
+    """
+    counts = {TEST_STEP_UNPRIVILEGED: 0, TEST_STEP_PRIVILEGED: 0,
+              TEST_STEP_UNIDENTIFIED: 0}
+    for prof in repos.values():
+        for flag in prof[scope]["flags"]:
+            if flag in counts:
+                counts[flag] += 1
+    return (counts[TEST_STEP_UNPRIVILEGED], counts[TEST_STEP_PRIVILEGED],
+            counts[TEST_STEP_UNIDENTIFIED])
+
+
 def primary_of(prof, scope=PR_SCOPE):
     """One scope's primary class, or None where the profile has no such scope.
 
@@ -242,9 +275,12 @@ def primary_of(prof, scope=PR_SCOPE):
 
 __all__ = ["PR_SCOPE", "REPO_SCOPE", "SCOPES", "classify",
            "contributor_runnable", "forge_token_split", "primary_of",
+           "tests_unprivileged",
            "ACTS_ON_FORGE", "WRITES_OUTWARD", "READ_CREDENTIAL",
            "SPECIAL_ENV", "SELF_CONTAINED", "NO_PULL_REQUEST_TRIGGER",
            "NO_PIPELINE", "THIN_WRAPPER", "PULL_REQUEST_TARGET",
            "USES_FORGE_TOKEN", "ASSUMES_TOOLCHAIN",
            "CREDENTIALS_REPORTING_ONLY", "CREDENTIALS_TEST_TIME",
-           "CREDENTIALS_UNCLEAR", "PRECEDENCE", "ASIDE", "GROUPS"]
+           "CREDENTIALS_UNCLEAR", "TEST_STEP_UNPRIVILEGED",
+           "TEST_STEP_PRIVILEGED", "TEST_STEP_UNIDENTIFIED",
+           "PRECEDENCE", "ASIDE", "GROUPS"]

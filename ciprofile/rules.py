@@ -57,11 +57,33 @@ The honest finding about this axis is in EXPERIMENTS.md, under "Separating a
 secret for the tests from a secret to record the results": the band it produces
 is too wide to quote, because in most of the remaining cases the configuration
 simply does not say what its privilege is for.
+
+THE TEST STEP ON ITS OWN
+------------------------
+A narrower question, asked because the one above is answerable so rarely: does
+the step that actually invokes the test suite consume a credential? If it does
+not, the tests can run without the project's secrets whatever the steps around
+them need, which is what a contributor wanting a pre-flight signal is asking.
+It is a determination of its own rather than a fourth value on the axis above,
+because it is about one step and that axis is about all of them.
+
+Two rules carry it, and both are asymmetries in the same direction as the one
+above. A credential the step INHERITS from a workflow-level or job-level
+`env:`, or from GitLab's `variables:`, counts as available to it, so the step's
+own text is never read alone; and where whether a credential reaches the step
+cannot be settled, the step counts as privileged. Test identification is
+recognition and not inference: an unrecognised command form answers "not
+identifiable" rather than "unprivileged". See test_step_signals().
+
+Its own measured finding is in EXPERIMENTS.md, under "Narrowing the band by
+asking only about the test step": it resolves about a third of the unclear
+band, and what stops it resolving the rest is no longer an unrecorded purpose
+but an unreadable test command.
 """
 import re
 
 from .structure import (actions_script_bodies, actions_triggers, kind_of,
-                        privilege_units, strip_comments)
+                        privilege_units, strip_comments, units_with_scope)
 
 # ---------------------------------------------------------------- the classes
 #
@@ -96,12 +118,25 @@ ASSUMES_TOOLCHAIN = "assumes-toolchain"
 CREDENTIALS_REPORTING_ONLY = "credentials-reporting-only"
 CREDENTIALS_TEST_TIME = "credentials-test-time"
 CREDENTIALS_UNCLEAR = "credentials-unclear"
+# The test step's own privilege: one of three, mutually exclusive, and present
+# wherever a scope holds a pipeline file at all. A narrower question than the
+# credentials axis above and asked for the same reason, which is why it is a
+# determination of its own rather than a fourth value there. The credentials
+# axis asks about EVERY privileged step in a scope, so one unrecognised step
+# anywhere holds the whole scope unclear; this asks only whether the step that
+# invokes the test suite consumes a credential, which is what a contributor
+# wanting a pre-flight signal needs to know. Off the ladder and changing no
+# primary class, like the asides above.
+TEST_STEP_UNPRIVILEGED = "test-step-unprivileged"
+TEST_STEP_PRIVILEGED = "test-step-privileged"
+TEST_STEP_UNIDENTIFIED = "test-step-unidentified"
 
 PRECEDENCE = [ACTS_ON_FORGE, WRITES_OUTWARD, READ_CREDENTIAL, SPECIAL_ENV,
               SELF_CONTAINED, NO_PULL_REQUEST_TRIGGER, NO_PIPELINE]
 ASIDE = [THIN_WRAPPER, PULL_REQUEST_TARGET, USES_FORGE_TOKEN,
          ASSUMES_TOOLCHAIN, CREDENTIALS_REPORTING_ONLY, CREDENTIALS_TEST_TIME,
-         CREDENTIALS_UNCLEAR]
+         CREDENTIALS_UNCLEAR, TEST_STEP_UNPRIVILEGED, TEST_STEP_PRIVILEGED,
+         TEST_STEP_UNIDENTIFIED]
 
 # ---------------------------------------------------------------- credentials
 
@@ -666,16 +701,50 @@ UNUSED_GRANT = "unused-grant"
 OPAQUE_STEP = re.compile(
     r"^[ \t]*(?:-[ \t]+)?uses:[ \t]*['\"]?(?:\S+\.ya?ml(?:@\S+)?"
     r"|\.[\w./-]+)['\"]?[ \t]*$", re.M)
-# Where the tests are, for the order tiebreak.
+# Where the tests are. An EXPLICIT LIST OF COMMAND FORMS, which is the whole of
+# the mechanism: recognition, never inference. There is no rule here that reads
+# an unfamiliar command and decides it looks like a test run, and
+# test_step_signals() answers "not identifiable" for one rather than guessing.
+#
+# Two callers, and the error direction is opposite for each, which is why the
+# list is kept to command forms that mean a test run and nothing else:
+#
+#   - THE ORDER TIEBREAK in privilege_purpose(). There a wider list demotes
+#     more reporting readings, which is the conservative direction, so a
+#     spurious match costs nothing.
+#   - THE TEST-STEP DETERMINATION below. There a spurious match is the
+#     FLATTERING direction: a step that is not a test run but holds no
+#     credential would read as a test suite that runs unprivileged. So a form
+#     that is also an ordinary English word, or a build command that only
+#     sometimes runs tests, stays off the list.
+#
+# The clusters beyond the first-pass list (pytest, tox, the npm family, go,
+# cargo, maven, gradle, dotnet, rspec, phpunit, jest, vitest, make, ctest,
+# bats) are each a language ecosystem's single conventional test entry point,
+# which is what makes them unambiguous: `mix test`, `swift test`,
+# `cabal`/`stack test`, `dune runtest`, `deno test`, `flutter`/`dart test`,
+# `meson`/`ninja test`, `zig build test`, and the alternative runners for
+# ecosystems already here (`py.test`, `gotestsum`, `ginkgo`,
+# `cargo nextest`, `cypress run`, `composer test`, `sbt ... test`,
+# `R CMD check`). `ant` joins the task-runner family for the same reason the
+# others are in it: the target is named on the command line, so `ant ... test`
+# says what it runs.
 TEST_INVOCATION = re.compile(
     r"\bpytest\b|\btox\b|\bnox\b|\b(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test\b"
     r"|\bgo\s+test\b|\bcargo\s+test\b|\bdotnet\s+test\b|\bctest\b"
     r"|\bmvn\b[^\n]*\b(?:test|verify)\b"
     r"|\b\.?/?gradlew?\b[^\n]*\b(?:test|check)\b"
-    r"|\b(?:make|just|task|rake|invoke)\s+(?:[\w:.=/-]+\s+)*(?:test|check)\b"
+    r"|\b(?:make|just|task|rake|invoke|ant)\s+(?:[\w:.=/-]+\s+)*"
+    r"(?:test|check)\b"
     r"|\bphpunit\b|\brspec\b|\bjest\b|\bvitest\b|\bmocha\b|\bbats\b"
     r"|\bpython3?\s+-m\s+(?:pytest|unittest)\b|\bbehave\b"
-    r"|\bplaywright\s+test\b|\bRscript\b[^\n]*\btest", re.I)
+    r"|\bplaywright\s+test\b|\bRscript\b[^\n]*\btest"
+    r"|\bpy\.test\b|\bgotestsum\b|\bginkgo\b|\bcargo\s+nextest\b"
+    r"|\bcomposer\s+(?:run\s+)?test\b|\bmix\s+test\b|\bsbt\b[^\n]*\btest\b"
+    r"|\bdune\s+(?:test|runtest)\b|\bswift\s+test\b|\bdeno\s+test\b"
+    r"|\b(?:flutter|dart)\s+test\b|\b(?:meson|ninja)\s+test\b"
+    r"|\b(?:cabal|stack)\s+test\b|\bcypress\s+run\b|\bzig\s+build\s+test\b"
+    r"|\bR\s+CMD\s+check\b", re.I)
 # The largest cluster of credentials a corpus of this shape leaves unexplained:
 # a build-only Maven or Gradle workflow holding a secret, which is very likely
 # a private registry whose name gives nothing away. Recorded as evidence on the
@@ -684,6 +753,59 @@ TEST_INVOCATION = re.compile(
 # cluster greppable so somebody can settle it by reading the files instead of
 # re-fetching them.
 JVM_BUILD_SECRET = "jvm-build-secret"
+
+# ------------------------------------------- the test step's own privilege
+#
+# The evidence behind the three values at the top of this module, one signal
+# per reason, so the residual is greppable out of the cache by cause rather
+# than only countable. A later differential-execution run has to cover exactly
+# the units these name.
+#
+# A test step runs unprivileged on the strength of one signal only, and it is
+# a positive finding about a step that was identified:
+TEST_STEP_CLEAN = "test-step-clean"
+# Everything else is privileged. These three are findings: something was seen
+# reaching the step.
+TEST_STEP_CREDENTIAL = "test-step-credential"
+TEST_STEP_INHERITED_CREDENTIAL = "test-step-inherited-credential"
+TEST_STEP_PRIVILEGED_ACT = "test-step-privileged-act"
+# And these two are refusals: the step is there and whether a credential
+# reaches it cannot be settled, because the enclosing scope could not be cut
+# out of the file, or it was cut from a file that is not the whole
+# configuration. Privileged, which is the asymmetry the credentials axis
+# already enforces and the reason the figure is not flattering by default.
+TEST_STEP_SCOPE_UNREADABLE = "test-step-scope-unreadable"
+TEST_STEP_SCOPE_INCOMPLETE = "test-step-scope-incomplete"
+# Recorded beside the verdict and deciding nothing, which is what keeps the
+# forge-token carve-out in one place: a test step reached by the forge's own
+# auto-minted token and by nothing else runs unprivileged, because a
+# contributor supplies nothing for that token. Folding it into
+# TEST_STEP_CREDENTIAL would tell a reader they need a secret they do not;
+# leaving it unrecorded would hide the size of the judgement. Same reading as
+# the `forge-token` signal, reported separately so it can be re-sliced here
+# too.
+TEST_STEP_FORGE_TOKEN = "test-step-forge-token"
+TEST_STEP_PRIVILEGED_SIGNALS = {
+    TEST_STEP_CREDENTIAL, TEST_STEP_INHERITED_CREDENTIAL,
+    TEST_STEP_PRIVILEGED_ACT, TEST_STEP_SCOPE_UNREADABLE,
+    TEST_STEP_SCOPE_INCOMPLETE}
+TEST_STEP_SIGNALS = TEST_STEP_PRIVILEGED_SIGNALS | {TEST_STEP_CLEAN,
+                                                    TEST_STEP_FORGE_TOKEN}
+# Authentications that consume a credential the file need not name: a registry
+# login reading a password off stdin or out of a file, a cloud login whose
+# credentials arrive through an action's `with:`. Compound commands are why
+# this is here rather than left to the credential scan: `docker login
+# --password-stdin < /run/secrets/pw && npm test` hands the test step a
+# session nobody can see in a variable name.
+STEP_AUTHENTICATES = (DOCKER_LOGIN, CLOUD_AUTH)
+# Configuration this file is not the whole of, so a credential could be
+# inherited from text that was never fetched. GitLab's `include:` pulls in
+# another file's global `variables:`, and `extends:` pulls in another job's.
+# Both are ordinary GitLab style rather than an edge, so this refuses the
+# unprivileged reading for a large share of any GitLab corpus; the signal says
+# which, so the cost of the rule is countable instead of hidden.
+GITLAB_INHERITS_ELSEWHERE = re.compile(
+    r"^include:|^[ \t]+extends:[ \t]*\S", re.M)
 
 GROUPS = {
     WRITES_OUTWARD: {n for n, _ in OUTWARD},
@@ -951,9 +1073,115 @@ def credentials_purpose(signals):
     return None
 
 
+def test_step_signals(kind, text):
+    """Whether a credential reaches the step that invokes the test suite.
+
+    A narrower question than privilege_purpose()'s and the useful one for a
+    contributor: not "is every privileged step in this scope droppable" but
+    "can the test suite run without the project's secrets". Where it can, the
+    tests are runnable on a contributor's own infrastructure whatever the
+    publish and reporting steps around them need.
+
+    THE ERROR DIRECTION. Where it cannot be determined whether a credential is
+    reachable from the test step, the step is PRIVILEGED. That covers a step
+    whose enclosing scope could not be cut out of the file and a step in a file
+    that is not the whole configuration, and it is the same asymmetry
+    credentials_purpose() enforces: the flattering answer must never win by
+    default, so it is only ever reached by positive evidence that the step was
+    identified and that nothing reaches it.
+
+    INHERITED ENVIRONMENT IS THE TRAP. A credential mapped in at workflow level
+    or job level `env:`, or in GitLab's global or job `variables:`, is in the
+    environment of every step in that scope, including the test step, although
+    the step itself names no secret. Ignoring that would make the figure wrong
+    in the flattering direction and in bulk, since a job-level `env:` is the
+    ordinary way to hand a whole job a credential. So a credential referenced
+    anywhere in the step's enclosing scopes counts as available to it, and
+    structure.units_with_scope() is what cuts those scopes per step rather than
+    per file. Taking the whole enclosing text rather than only its `env:` and
+    `variables:` blocks over-claims where an enclosing reference is not in fact
+    mapped into the environment, which is this axis's direction everywhere.
+
+    A privilege grant in the enclosing scope is NOT a credential here. A
+    `permissions:` block scopes a token a step has to ask for; it puts nothing
+    in the environment, and reading it as a credential would make the
+    determination a restatement of the ladder.
+    """
+    out = set()
+    incomplete = bool(kind == "gitlab"
+                      and GITLAB_INHERITS_ELSEWHERE.search(text))
+    for unit, enclosing in units_with_scope(kind, text):
+        if not TEST_INVOCATION.search(unit):
+            continue
+        if enclosing is None:
+            out.add(TEST_STEP_SCOPE_UNREADABLE)
+            continue
+        own = credential_names(unit)
+        inherited = credential_names(enclosing)
+        step = set()
+        if own & FORGE_TOKENS or inherited & FORGE_TOKENS:
+            step.add(TEST_STEP_FORGE_TOKEN)
+        # Compound commands: the unit is the whole step, so a test invocation
+        # sharing a shell line with a privileged act is caught by reading the
+        # step whole. `npm ci && npm test` raises nothing here, which is the
+        # other half of that: installing is not a privilege.
+        act = base_signals(kind, unit) & (PRIVILEGE_SIGNALS - {"secret-ref"})
+        if own - FORGE_TOKENS or SECRETS_INHERIT.search(unit):
+            step.add(TEST_STEP_CREDENTIAL)
+        if inherited - FORGE_TOKENS or SECRETS_INHERIT.search(enclosing):
+            step.add(TEST_STEP_INHERITED_CREDENTIAL)
+        if act or any(p.search(unit) for p in STEP_AUTHENTICATES):
+            step.add(TEST_STEP_PRIVILEGED_ACT)
+        # Judged per step and accumulated afterwards, so one privileged test
+        # step cannot take the reading of another step in the same file away.
+        # The scope-wide asymmetry is test_step_privilege()'s business.
+        if not step & TEST_STEP_PRIVILEGED_SIGNALS:
+            # Identified, and nothing reaches it. The one signal that can
+            # answer unprivileged, and it is refused where the file is not the
+            # whole configuration.
+            step.add(TEST_STEP_SCOPE_INCOMPLETE if incomplete
+                     else TEST_STEP_CLEAN)
+        out |= step
+    return out
+
+
+def test_step_privilege(signals):
+    """One scope's determination, which is never absent where it holds a file.
+
+    Asked of a scope rather than a file, like credentials_purpose(), and with
+    the same asymmetry: a privileged test step anywhere in the scope decides
+    it, because nothing here can say which of several test invocations is the
+    one a contributor would run.
+
+    `unprivileged` is a claim about a test step that was identified and that
+    nothing reaches, so it says there is a test suite a contributor could run,
+    not that every step in the scope is clean. `unidentified` is the answer
+    where no command form in TEST_INVOCATION was found anywhere in the scope,
+    and it is deliberately not folded into either of the others: a scope whose
+    tests run behind a project's own shell script is a scope this cannot read,
+    which is a different statement from either answer about one it can.
+
+    A test-time credential is decisive here as it is there, and the reason is
+    the second way a credential reaches a test step. Every TEST_TIME rule
+    requires the credential AND the resolution command in the same file, so
+    the credential is by definition what the test invocation needs; it just
+    arrives through a settings file or a credential helper an earlier step
+    wrote rather than through the environment. The environment reading cannot
+    see that, and without this the `mvn verify` whose registry password was
+    written into settings.xml by the step before it would read as a test suite
+    that runs unprivileged, which is the flattering answer and a wrong one.
+    """
+    if signals & (TEST_STEP_PRIVILEGED_SIGNALS | TEST_TIME_SIGNALS):
+        return TEST_STEP_PRIVILEGED
+    if TEST_STEP_CLEAN in signals:
+        return TEST_STEP_UNPRIVILEGED
+    return TEST_STEP_UNIDENTIFIED
+
+
 def file_signals(path, raw):
     """The signal names one pipeline file raises."""
     kind = kind_of(path) or "actions"
     text = strip_comments(raw)
     found = base_signals(kind, text)
-    return found | privilege_purpose(kind, text, found)
+    return (found | privilege_purpose(kind, text, found)
+            | test_step_signals(kind, text))
