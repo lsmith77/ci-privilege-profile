@@ -42,13 +42,14 @@ has what a first sample of it measured.
 
 **It cannot tell you what a privilege is FOR, most of the time.** The tool
 tries: a secret that only uploads coverage can be skipped, while a secret that
-resolves private dependencies cannot. Of 361 repositories with a
-pull-request-triggered pipeline in the corpus it was developed against, it
-could read 158 as needing nothing granted and 24 as needing only a credential
-that records results; **155 it could not read either way**. The derived figure
-is "between 50% and 93%", which is too wide to use. The reason is not a missing
-rule: in those cases the purpose of the privilege is simply not written down
-anywhere in the configuration. [EXPERIMENTS.md](EXPERIMENTS.md#separating-a-secret-for-the-tests-from-a-secret-to-record-the-results)
+resolves private dependencies cannot. In the corpus it was developed against,
+361 of 1428 classified repositories have a pull-request-triggered pipeline,
+organisation profile repositories included; of those 361 it could read 158 as
+needing nothing granted and 24 as needing only a credential that records
+results, and **155 of the 361 it could not read either way**. The derived
+figure is "between 50% and 93%", which is too wide to use. The reason is not a
+missing rule: in those cases the purpose of the privilege is simply not
+written down anywhere in the configuration. [EXPERIMENTS.md](EXPERIMENTS.md#separating-a-secret-for-the-tests-from-a-secret-to-record-the-results)
 records that in full, including three attempts to narrow the band that moved it
 by about a point each.
 
@@ -72,11 +73,11 @@ when that was first tried on a name-ordered listing, 17 of the first 25
 repositories were organisation metadata repositories holding no software.
 
 **Most of the uncertainty above is the corpus, not the tool.** In the corpus
-this was developed against, only 361 of 1428 repositories have a pipeline a
-pull request triggers; 220 of those 361 yield no identifiable test invocation;
-and of the 326 fork pull requests landing on a repository that does check pull
-requests, 264 carried no check at all, which is what starves the one instrument
-that produces ground truth. [Why this class of corpus is hard to
+this was developed against, only 361 of 1428 classified repositories have a
+pipeline a pull request triggers; 220 of those 361 yield no identifiable test
+invocation; and of the 326 fork pull requests landing on a repository that does
+check pull requests, 264 carried no check at all, which is what starves the one
+instrument that produces ground truth. [Why this class of corpus is hard to
 measure](EXPERIMENTS.md#why-this-class-of-corpus-is-hard-to-measure) sets out
 each property, the instrument it defeats, and the measured consequence.
 
@@ -109,9 +110,9 @@ droppable, but whether the step that **invokes the test suite** consumes a
 credential. A credential reachable by inheritance from a workflow-level or
 job-level `env:` counts as available to it, an unrecognised command form
 answers "not identifiable" rather than "unprivileged", and where reachability
-cannot be determined the step counts as privileged. Of the 361 repositories
-above it reads 109 as having a test suite that runs unprivileged, and 220 as
-not saying enough to tell.
+cannot be determined the step counts as privileged. Of the same 361 of 1428 it
+reads 109 as having a test suite that runs unprivileged, and 220 as not saying
+enough to tell.
 
 Every repository gets both scopes. The **pull-request scope** is the one to
 quote, because it answers what a contributor must be able to run. The

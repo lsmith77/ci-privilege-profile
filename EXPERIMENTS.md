@@ -48,13 +48,13 @@ profile repositories included, which is the basis the entries below and
 `README.md` use; the run write-up in [results/](results/README.md) excludes
 those repositories and states the same quantities over 1409.
 
-**Most projects do not check pull requests.** 361 of 1428 repositories have a
-pipeline that a pull request triggers, a little over a quarter. 880 hold no
-pipeline this tool reads at all and 187 hold pipelines that no pull request
-sets off. Everything measured about contributor-side CI applies to that
-quarter; the rest of the corpus is outside the question rather than answered by
-it, and a share quoted without that denominator will be read as a share of the
-corpus.
+**Most projects do not check pull requests.** 361 of 1428 classified
+repositories have a pipeline that a pull request triggers, a little over a
+quarter. 880 hold no pipeline this tool reads at all and 187 hold pipelines
+that no pull request sets off. Everything measured about contributor-side CI
+applies to that quarter; the rest of the corpus is outside the question rather
+than answered by it, and a share quoted without that denominator will be read
+as a share of the corpus.
 
 **Contribution from outside exists but is thin, and CI almost never runs on
 it.** 253 of the 1340 repositories the fork observation reached carry any fork
@@ -274,13 +274,13 @@ and treating them as nothing would hide a real forge-write capability. The
 resolution is to record them as their own signal, raise `acts-on-forge` only in
 company with an actual forge-write signal, and **publish the split**.
 
-**Measured effect.** In the pull-request scope of the corpus: 97 repositories
-reference a forge-minted token. 33 of them also carry a forge-write signal, so
-they are `acts-on-forge` on their own evidence and the carve-out decides
-nothing for them. **64 carry no forge-write signal at all**: their class rests
-entirely on this judgement. That second number is the size of the disagreement,
-so anybody who thinks the carve-out is wrong can restate the headline under the
-stricter reading without re-running anything.
+**Measured effect.** In the pull-request scope, over all 1428 classified
+repositories: 97 reference a forge-minted token. 33 of them also carry a
+forge-write signal, so they are `acts-on-forge` on their own evidence and the
+carve-out decides nothing for them. **64 carry no forge-write signal at all**:
+their class rests entirely on this judgement. That second number is the size of
+the disagreement, so anybody who thinks the carve-out is wrong can restate the
+headline under the stricter reading without re-running anything.
 
 **Limitation that remains.** The carve-out is right about who supplies the
 token and says nothing about what the job does with it. A `permissions:` block
@@ -353,11 +353,14 @@ Actions** rules, which is not what it was looking for:
   mattering disproportionately because a keyless publish carries no credential
   for any other rule to detect.
 
-Fixing all three, measured on the pull-request scope of a 358-repository
-subset: read-credential 60 → 47, outward writes 50 → 67, self-contained
-161 → 158. **The self-contained figure barely moved.** The correction changed
-*which privileged class* repositories fell into, not *how many* needed no
-privilege.
+Fixing all three, measured on the pull-request scope of the 358 of 1409
+repositories left once organisation profile repositories leave the denominator:
+read-credential 60 → 47, outward writes 50 → 67, self-contained 161 → 158. Over
+the 361 of 1428 the rest of this file is measured on, those three post-fix
+figures are the same, because the only class the two bases disagree about is
+`acts-on-forge`, 70 against 73, and it is not one of them. **The self-contained
+figure barely moved.** The correction changed *which privileged class*
+repositories fell into, not *how many* needed no privilege.
 
 **Limitation that remains.** The sample was twenty projects; it cannot say what
 share of anything is anything, and its own output says so in several places.
@@ -508,8 +511,8 @@ scope. Without that rule the flattering answer wins by default for every tool
 the tables have never heard of, and the figure becomes a measure of the tables
 rather than of the corpus.
 
-**Measured effect: the band did not collapse.** Of 361 repositories with a
-pull-request-triggered pipeline:
+**Measured effect: the band did not collapse.** Of the 361 of 1428 classified
+repositories with a pull-request-triggered pipeline:
 
 | reading | repositories |
 | --- | ---: |
@@ -581,9 +584,8 @@ step, because a credential in the publish job's `env:` sits in the same frame
 as the test job's steps. So a second reading was added,
 `structure.units_with_scope()`, which hands each step the workflow's own
 top-level keys plus the keys of the one job it sits in, minus that job's
-`steps:` block. In the corpus the difference is 6 repositories read as
-privileged through inheritance alone that the step's own text would have called
-clean.
+`steps:` block. In the corpus the difference is 6 of the 361 read as privileged
+through inheritance alone that the step's own text would have called clean.
 
 **The error direction.** Where whether a credential reaches the test step
 cannot be settled, the step is privileged. That covers a step whose enclosing
@@ -599,8 +601,8 @@ reading, while a spurious match on a clean step would hand out the flattering
 answer for free.
 
 **Measured effect: it resolves about a third of the unclear band, and the
-useful answer in about a fifth.** Of 361 repositories with a
-pull-request-triggered pipeline:
+useful answer in about a fifth.** Of the 361 of 1428 classified repositories
+with a pull-request-triggered pipeline:
 
 | determination | repositories | of the 155 unclear |
 | --- | ---: | ---: |
@@ -614,7 +616,7 @@ unprivileged. **That is a real gain and it is not the gain that was hoped
 for**: two thirds of the band is unresolved, and for the same reason the band
 exists at all. The obstacle is no longer the purpose of a privilege being
 unrecorded; it is that **the test invocation itself is not in the file**. The
-residual, grouped by cause over the 252 repositories not read as unprivileged:
+residual, grouped by cause over the 252 of the 361 not read as unprivileged:
 
 one bucket each, so the column sums:
 
@@ -650,10 +652,10 @@ does reach the band; what it does not reach is the scale.
 test suite that demonstrably runs unprivileged is a stronger and narrower claim
 than anything the credentials axis produces, and because its band is reported
 beside it every time. The forge-token carve-out was measured here too and
-**changed no repository's determination**: 14 scopes have a test step reached by
-the forge's own auto-minted token, and all 14 also have a real credential
-reaching one, so the judgement that moves the headline distribution moves
-nothing at all in this figure.
+**changed no repository's determination**: 14 of the 361 have a test step
+reached by the forge's own auto-minted token, and all 14 also have a real
+credential reaching one, so the judgement that moves the headline distribution
+moves nothing at all in this figure.
 
 **If you are starting fresh.** Narrowing the question is worth trying before
 adding rules to a wide one; it moved more here than three attempts at narrowing
@@ -1004,10 +1006,10 @@ orders of magnitude more expensive per repository than reading the text, and it
 is the floor rather than the average, because the sample was chosen for small
 workflows and recognised toolchains.
 
-**What the selection rule costs, stated because it is severe.** From the
-repositories with a pull-request-triggered pipeline, dropping those static
-reading already resolved leaves the unresolved band; of that band, the filters
-for what a local runner can execute leave fewer than a third:
+**What the selection rule costs, stated because it is severe.** From the 361 of
+1428 classified repositories with a pull-request-triggered pipeline, dropping
+those static reading already resolved leaves the unresolved band; of that band,
+the filters for what a local runner can execute leave fewer than a third:
 
 | dropped by | repositories |
 | --- | ---: |
@@ -1164,8 +1166,8 @@ conversations rather than a classifier.
 
 The cost is that it does not scale, it cannot be re-run cheaply when the corpus
 moves, and the answers are not independently checkable. But it would settle the
-155 unclear cases, and it would do so with the only evidence that actually
-exists for them.
+155 unclear cases of the 361, and it would do so with the only evidence that
+actually exists for them.
 
 **Assessment: the correct instrument for the specific question this tool
 failed at.** The right shape is probably both: static analysis to find the

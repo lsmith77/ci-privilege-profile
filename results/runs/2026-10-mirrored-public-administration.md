@@ -407,6 +407,6 @@ absent row instead.
 as having 361 repositories with a pull-request-triggered pipeline, and give
 `credentials-unclear` as 155. Those are the figures over all 1428 classified
 repositories, organisation profile repositories included. This write-up
-declares the denominator 1409 and reports 358 and 152. Neither is wrong; one of
-them was stated without its denominator, which is the entire reason that field
+declares the denominator 1409 and reports 358 and 152. Neither is wrong, and
+each figure carries the basis it is over, which is the entire reason that field
 is required here.
