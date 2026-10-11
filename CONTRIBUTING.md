@@ -113,6 +113,8 @@ ones whose failure is invisible in the output:
 | Lower `RUNNER_MIN`, or take the first runner on PATH rather than the newest | "a runner too old to run the corpus is refused", "the newest runner on PATH wins" |
 | Signal the runner alone rather than its process group on a timeout, or stop asking the session to stop at all, or start it in this session | "a budget that runs out takes the whole session with it", "run_workflow stops the session when the budget runs out" |
 | Drop the refusal in `_stop_session()` to signal the group it is running in | "stopping never signals the group it is running in" |
+| Let `IMAGE_LIMITATION` claim the daemon's own free space again, or drop `HEADROOM_LIMITATION` from the refusal | "the daemon's own figure is preferred to the host's", "the disk preflight refuses below the floor" |
+| Admit a container-launching command to `DOCKER_READ_ONLY`, for the better disk figure | "nothing here prunes anything, asserted from the source" |
 
 One rule follows from mutation testing and is not negotiable: **a test that can
 destroy data is a bug in the test.** Mutation testing deliberately breaks the

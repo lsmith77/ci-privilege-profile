@@ -303,6 +303,10 @@ CLONE_PACE = 5.0
 # It is a floor and not a budget. A sample whose repositories each want a
 # different toolchain can need several times this, which is why the figure is
 # re-read between repositories rather than trusted once at the start.
+#
+# And it is a floor under GROWTH HEADROOM, not under the daemon's internal free
+# space: see disk_headroom() for what that costs and why no container is
+# started to get the better figure.
 DISK_FLOOR = 10 * 1000 ** 3
 LOW_DISK_ENV = "ALLOW_LOW_DISK"
 
@@ -335,12 +339,26 @@ READ_FROM_IMAGE = "the daemon's VM disk image, {}"
 READ_FROM_HOST = "the host filesystem at {}"
 
 IMAGE_LIMITATION = (
-    "A LOWER BOUND rather than the daemon's own reading. The VM's disk image "
-    "is sparse, so what is reported is the remainder of its declared size that "
-    "the VM has never written; a block the VM has since freed may still be "
-    "allocated on the host and is counted as used here. The figure is capped "
-    "by the host filesystem as well, because the image can only grow into it. "
-    "It therefore errs toward refusing a run that would have fitted.")
+    "HOW MUCH FURTHER THE VM IMAGE COULD GROW, not how much room is left "
+    "inside it. The VM's disk image is sparse, so what is reported is the "
+    "remainder of its declared size that the VM has never written, capped by "
+    "the host filesystem the image grows into; a block the VM has since freed "
+    "may still be allocated on the host and is counted as used here. It "
+    "therefore errs toward refusing a run that would have fitted, and it says "
+    "nothing at all about the free space the daemon sees inside its own "
+    "filesystem.")
+
+# Printed and recorded beside every reading, because the whole figure is
+# growth headroom and a reader will otherwise take it for free space.
+HEADROOM_LIMITATION = (
+    "WHAT THIS GUARD PROTECTS AGAINST IS FILLING THE HOST. It does not detect "
+    "a daemon that is internally full: the figure is how much further the "
+    "daemon's storage can grow into the disk underneath it, not how much room "
+    "is left inside the filesystem the daemon writes images, volumes and "
+    "container layers to. Those two differ, and in the direction that matters "
+    "here, so a daemon whose own filesystem is full while the host still has "
+    "room passes this preflight. The symptom of that case is a run that fails "
+    "on a write with the preflight having said yes.")
 HOST_LIMITATION = (
     "THE DAEMON'S OWN FIGURE COULD NOT BE READ, so this is the host "
     "filesystem and not the disk the containers are written to. The two differ "
@@ -362,11 +380,16 @@ RECLAIM_ADVICE = (
     "something.")
 
 DISK_COMMENT = (
-    "What was available to the container daemon at the start and at the end of "
-    "the run, so a reader can see what it cost. `read_from` says which figure "
-    "it is: the daemon's own storage directory is exact, a VM disk image is a "
-    "lower bound, and the host filesystem is a substitute reported only when "
-    "nothing better could be read. `limitation` carries that caveat verbatim. "
+    "The container daemon's growth headroom at the start and at the end of "
+    "the run, so a reader can see what it cost. NOT the free space the daemon "
+    "sees inside its own filesystem: this guard protects against filling the "
+    "host, and a daemon that is internally full while the host still has room "
+    "passes it, the symptom being a run that fails on a write although the "
+    "preflight said yes. `read_from` says which reading it is: the daemon's "
+    "own storage directory is the filesystem's own free space, a VM disk image "
+    "is how much further that image could grow, and the host filesystem is a "
+    "substitute reported only when nothing better could be read. `limitation` "
+    "carries that caveat verbatim. "
     "`stopped_early` is set when the floor was reached between repositories "
     "and the run stopped with the results it had, which is why the "
     "distribution above may cover fewer repositories than were selected. "
@@ -603,8 +626,16 @@ def docker_read(what, run=None, docker=DOCKER):
     return (text or ""), (reason or "")
 
 
-def disk_available(scratch=None, run=None, images=VM_DISK_IMAGE):
-    """(bytes available to the daemon, how it was read, the limitation).
+def disk_headroom(scratch=None, run=None, images=VM_DISK_IMAGE):
+    """(bytes of growth headroom, how it was read, the limitation).
+
+    GROWTH HEADROOM IS NOT THE DAEMON'S INTERNAL FREE SPACE, and the name is
+    the claim. What this measures is how much further the daemon's storage can
+    grow into the disk underneath it. The guard built on it protects against
+    filling the host; it does not detect a daemon that is internally full,
+    which passes the preflight and then fails on a write. HEADROOM_LIMITATION
+    says so wherever the figure is reported, because a figure called
+    "available" would be read as the thing this cannot measure.
 
     THE HOST FIGURE IS THE WRONG ANSWER and is the last resort here. What
     fills during a run is the filesystem the daemon writes images, volumes and
@@ -614,11 +645,25 @@ def disk_available(scratch=None, run=None, images=VM_DISK_IMAGE):
     exists to stop.
 
     So the daemon is asked where its root is, and three readings are possible,
-    in descending order of trust. If the root directory is on this filesystem,
-    that is the daemon's own disk and the figure is exact. If it is not, the
-    daemon is in a VM, and the VM's sparse disk image gives a lower bound. If
-    neither can be read, the host filesystem is reported with the substitution
-    stated in the limitation rather than passed off as the daemon's figure.
+    in descending order of how close each comes to the question. If the root
+    directory is on this filesystem, that is the daemon's own disk and its
+    free space is the figure. If it is not, the daemon is in a VM, and the
+    VM's sparse disk image says how much further it could grow, which is the
+    reading that is headroom and not free space. If neither can be read, the
+    host filesystem is reported with the substitution stated in the limitation
+    rather than passed off as the daemon's figure.
+
+    NO CONTAINER IS LAUNCHED TO READ THE BETTER FIGURE, and that is deliberate
+    rather than an omission. The daemon's internal free space can be had by
+    running a container and asking its filesystem. This module creates no
+    Docker object of any kind: DOCKER_READ_ONLY is every command it issues,
+    docker_read() refuses anything absent from that list, and the checks
+    assert both the list and the argv the preflight actually spends. That
+    property is worth more than the better number. It is what makes this
+    module safe to point at somebody's working machine, it is checkable in one
+    glance at DOCKER_READ_ONLY, and a preflight that started containers to
+    measure a disk would be claiming an exemption from the rule the rest of
+    the module keeps. So the limitation is published instead.
     """
     scratch = tempfile.gettempdir() if scratch is None else scratch
     host, host_reason = None, ""
@@ -660,29 +705,32 @@ def disk_available(scratch=None, run=None, images=VM_DISK_IMAGE):
     return host, READ_FROM_HOST.format(scratch), HOST_LIMITATION.format(why)
 
 
-def require_disk(available, floor=DISK_FLOOR, allow_low=None):
-    """Refuse a run the disk has no room for. The reason, or None.
+def require_disk(headroom, floor=DISK_FLOOR, allow_low=None):
+    """Refuse a run the disk has no room to grow into. The reason, or None.
 
     The message carries the floor, what was found and the difference between
     them, because "not enough space" sends the operator to go and measure
-    something this function has already measured. The escape hatch is named in
-    it for the same reason the sample ceiling names its own: the floor stops
-    an accident, and a deliberate run on a tight disk is a decision somebody
-    is allowed to make in writing.
+    something this function has already measured. It carries the limitation
+    too: the figure it refuses on is growth headroom, so a refusal is about
+    the host filling up and a pass is not a statement that the daemon has room
+    inside its own filesystem. The escape hatch is named in it for the same
+    reason the sample ceiling names its own: the floor stops an accident, and
+    a deliberate run on a tight disk is a decision somebody is allowed to make
+    in writing.
 
     An unreadable figure does not refuse. There is nothing to refuse on, and
     guessing in either direction would be worse than saying so, which
-    disk_available() has already done in its limitation.
+    disk_headroom() has already done in its limitation.
     """
     if allow_low is None:
         allow_low = low_disk_allowed()
-    if available is None or available >= floor or allow_low:
+    if headroom is None or headroom >= floor or allow_low:
         return None
-    return ("only {} is available to the container daemon, below the {} floor "
-            "this mode needs. Free {} more, or re-run with {}=1 if running on "
-            "a disk this tight is deliberate.".format(
-                gb(available), gb(floor), gb(floor - available),
-                LOW_DISK_ENV))
+    return ("only {} of growth headroom is left for the container daemon, "
+            "below the {} floor this mode needs. Free {} more, or re-run with "
+            "{}=1 if running on a disk this tight is deliberate. {}".format(
+                gb(headroom), gb(floor), gb(floor - headroom),
+                LOW_DISK_ENV, HEADROOM_LIMITATION))
 
 
 def reclaimable(run=None):
@@ -1191,22 +1239,22 @@ def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
     `find_runner` takes `ask`: a check that had to fill a disk and start a
     container to exercise the stop is a check nobody runs.
     """
-    space = (lambda: disk_available()[0]) if space is None else space
+    space = (lambda: disk_headroom()[0]) if space is None else space
     clone_fn = clone if clone_fn is None else clone_fn
     run_fn = run_workflow if run_fn is None else run_fn
     records, interruption = [], None
     for i, row in enumerate(chosen):
         if i:
-            available = space()
-            refusal = require_disk(available, floor=floor,
+            headroom = space()
+            refusal = require_disk(headroom, floor=floor,
                                    allow_low=allow_low)
             if refusal:
                 interruption = {
                     "stopped_before": row["repo"],
                     "completed": len(records),
                     "selected": len(chosen),
-                    "available_bytes": available,
-                    "available": gb(available),
+                    "headroom_bytes": headroom,
+                    "headroom": gb(headroom),
                     "reason": refusal,
                 }
                 log("\nSTOPPING with {} of {} done, results kept: {}".format
@@ -1402,9 +1450,10 @@ def main(argv=None):
     }
     print(plan(chosen, args.timeout, args.arch, runner=runner or RUNNER))
     print("runner: {}\n".format(version_text))
-    started_with, read_from, limitation = disk_available()
-    print("disk available to the container daemon: {}  ({})".format(
+    started_with, read_from, limitation = disk_headroom()
+    print("container daemon growth headroom: {}  ({})".format(
         gb(started_with), read_from))
+    print("  " + HEADROOM_LIMITATION)
     if limitation:
         print("  " + limitation)
     if args.dry_run:
@@ -1425,10 +1474,11 @@ def main(argv=None):
     refuse_overwrite(out_path, DIFFERENTIAL_NAME)
     records, interruption = execute(chosen, timeout=args.timeout,
                                     arch=args.arch, runner=runner)
-    ended_with, read_from_end, limitation_end = disk_available()
+    ended_with, read_from_end, limitation_end = disk_headroom()
     summarise(records, interruption=interruption)
-    print("\ndisk available to the container daemon: {} at the start, {} now"
+    print("\ncontainer daemon growth headroom: {} at the start, {} now"
           .format(gb(started_with), gb(ended_with)))
+    print("  " + HEADROOM_LIMITATION)
     write(out_path, records, selection, {
         "runner": "{} ({})".format(version_text, runner),
         "runner_version": ".".join(str(n) for n in version),
@@ -1442,12 +1492,13 @@ def main(argv=None):
             "floor": gb(DISK_FLOOR),
             "floor_bytes": DISK_FLOOR,
             "floor_enforced": not low_disk_allowed(),
-            "available_at_start": gb(started_with),
-            "available_at_start_bytes": started_with,
-            "available_at_end": gb(ended_with),
-            "available_at_end_bytes": ended_with,
+            "headroom_at_start": gb(started_with),
+            "headroom_at_start_bytes": started_with,
+            "headroom_at_end": gb(ended_with),
+            "headroom_at_end_bytes": ended_with,
             "read_from": read_from,
             "read_from_at_end": read_from_end,
+            "headroom_limitation": HEADROOM_LIMITATION,
             "limitation": limitation,
             "limitation_at_end": limitation_end,
             "stopped_early": interruption,
@@ -1460,7 +1511,7 @@ def main(argv=None):
 __all__ = ["ANSWERS", "DISK_FLOOR", "DOCKER_READ_ONLY", "OUTCOMES",
            "PROVES_NOTHING", "RUNNER_MIN",
            "SELECTION_RULE", "aggregate", "assert_no_secret",
-           "build_parser", "classify_outcome", "disk_available", "docker_read",
+           "build_parser", "classify_outcome", "disk_headroom", "docker_read",
            "execute", "find_runner", "gb", "low_disk_allowed",
            "main", "plan",
            "read_steps", "reclaim_report", "reclaimable", "require_disk",

@@ -369,7 +369,10 @@ def the_disk_preflight_refuses_below_the_floor():
 
     The message has to carry the floor, what was found and the difference,
     because "not enough space" sends the operator off to measure what this
-    function has already measured.
+    function has already measured. And it has to carry the limitation, because
+    the figure it refuses on is growth headroom: the floor guards the host
+    filling up, and passing it is not a statement that the daemon has room
+    inside its own filesystem.
     """
     found = D.DISK_FLOOR - 3 * 1000 ** 3
     refusal = D.require_disk(found, allow_low=False)
@@ -378,13 +381,15 @@ def the_disk_preflight_refuses_below_the_floor():
     assert D.gb(D.DISK_FLOOR) in refusal, refusal
     assert D.gb(D.DISK_FLOOR - found) in refusal, refusal   # how much to free
     assert D.LOW_DISK_ENV in refusal, refusal
+    assert "growth headroom" in refusal, refusal
+    assert D.HEADROOM_LIMITATION in refusal, refusal
     assert D.require_disk(D.DISK_FLOOR, allow_low=False) is None
     assert D.require_disk(D.DISK_FLOOR + 1, allow_low=False) is None
     # A floor at or below the footprint of the tooling would refuse nothing
     # that mattered: it has to leave room for a repository as well.
     assert D.DISK_FLOOR > 4 * 1000 ** 3, D.DISK_FLOOR
     # And an unreadable figure is not a refusal. There is nothing to refuse
-    # on, and disk_available() has already said so in its limitation.
+    # on, and disk_headroom() has already said so in its limitation.
     assert D.require_disk(None, allow_low=False) is None
 
 
@@ -446,6 +451,10 @@ def a_shortfall_between_repositories_stops_the_run_with_its_results():
     assert interruption["completed"] == 1, interruption
     assert interruption["selected"] == 3, interruption
     assert D.LOW_DISK_ENV in interruption["reason"], interruption
+    # The stop records the figure it stopped on under the name of what that
+    # figure is, so a reader does not take it for the daemon's free space.
+    assert interruption["headroom_bytes"] == D.DISK_FLOOR // 4, interruption
+    assert interruption["headroom"] == D.gb(D.DISK_FLOOR // 4), interruption
     # The partial results are written, with the stop on the record, so a
     # reader does not meet a one-repository distribution and take it for the
     # sample that was asked for.
@@ -484,12 +493,16 @@ def the_daemons_own_figure_is_preferred_to_the_hosts():
     scratch space are usually the same filesystem; so the host read is made to
     FAIL instead, and a figure coming back at all can only have come from the
     daemon's own directory.
+
+    What the VM reading measures is growth headroom and not the free space
+    inside the VM, and its limitation has to say so: a daemon that is
+    internally full while the host still has room passes this preflight.
     """
     root = tempfile.mkdtemp()
-    available, how, limitation = D.disk_available(
+    headroom, how, limitation = D.disk_headroom(
         scratch=os.path.join(root, "nonexistent"),
         run=lambda argv: (root + "\n", ""))
-    assert available and available > 0, available
+    assert headroom and headroom > 0, headroom
     assert root in how and "storage directory" in how, how
     assert limitation == "", limitation
     # The VM reading, for the host where the daemon's root is inside a VM and
@@ -498,21 +511,31 @@ def the_daemons_own_figure_is_preferred_to_the_hosts():
     image = os.path.join(root, "Docker.raw")
     with open(image, "wb") as fh:
         fh.truncate(4096)
-    available, how, limitation = D.disk_available(
+    headroom, how, limitation = D.disk_headroom(
         scratch=root, run=lambda argv: ("/var/lib/docker-absent\n", ""),
         images=(image,))
-    assert available == 4096, available
+    assert headroom == 4096, headroom
     assert image in how, how
-    assert "LOWER BOUND" in limitation, limitation
+    # The claim the limitation must make, and the one it must not: it is how
+    # much further the image could grow, never how much room is left in it.
+    assert "HOW MUCH FURTHER" in limitation, limitation
+    assert "inside its own" in limitation, limitation
+    assert "LOWER BOUND" not in limitation, limitation
     # And the VM figure is capped by the host it grows into, or a disk image
     # declared larger than the machine would read as room the machine has not
     # got.
     with open(image, "wb") as fh:
         fh.truncate(10 ** 15)
-    available, _how, _limitation = D.disk_available(
+    headroom, _how, _limitation = D.disk_headroom(
         scratch=root, run=lambda argv: ("/var/lib/docker-absent\n", ""),
         images=(image,))
-    assert about(available, shutil.disk_usage(root).free), available
+    assert about(headroom, shutil.disk_usage(root).free), headroom
+    # The caveat on the whole figure, published with every reading: this guard
+    # is against filling the host and names the symptom of the case it cannot
+    # see, which is a run that fails on a write after the preflight passed.
+    assert "FILLING THE HOST" in D.HEADROOM_LIMITATION
+    assert "internally full" in D.HEADROOM_LIMITATION
+    assert "fails on a write" in D.HEADROOM_LIMITATION
 
 
 def an_unreadable_daemon_figure_falls_back_and_records_the_limitation():
@@ -526,29 +549,29 @@ def an_unreadable_daemon_figure_falls_back_and_records_the_limitation():
     """
     scratch = tempfile.mkdtemp()
     host = shutil.disk_usage(scratch).free
-    available, how, limitation = D.disk_available(
+    headroom, how, limitation = D.disk_headroom(
         scratch=scratch, run=lambda argv: (None, "`docker` did not run"),
         images=())
-    assert about(available, host), (available, host)
+    assert about(headroom, host), (headroom, host)
     assert scratch in how and "host filesystem" in how, how
     assert "COULD NOT BE READ" in limitation, limitation
     assert "did not run" in limitation, limitation
     # The daemon answered, but with a root directory that is somewhere else.
     # Same substitution, and it still says which.
-    available, how, limitation = D.disk_available(
+    headroom, how, limitation = D.disk_headroom(
         scratch=scratch, run=lambda argv: ("/var/lib/docker-absent\n", ""),
         images=())
-    assert about(available, host), (available, host)
+    assert about(headroom, host), (headroom, host)
     assert "/var/lib/docker-absent" in limitation, limitation
     assert "not on this filesystem" in limitation, limitation
     # And when neither can be read there is no figure to refuse on, which is
     # said rather than guessed at in either direction.
-    available, _how, limitation = D.disk_available(
+    headroom, _how, limitation = D.disk_headroom(
         scratch=os.path.join(scratch, "nonexistent"),
         run=lambda argv: (None, "no daemon"), images=())
-    assert available is None, available
+    assert headroom is None, headroom
     assert "NEITHER THE DAEMON NOR THE HOST" in limitation, limitation
-    assert D.require_disk(available, allow_low=False) is None
+    assert D.require_disk(headroom, allow_low=False) is None
     assert D.gb(None) == "unknown"
 
 
@@ -638,8 +661,13 @@ def nothing_here_prunes_anything():
     assert D.DOCKER_READ_ONLY, "the allowlist is empty"
     for words in D.DOCKER_READ_ONLY.values():
         assert words[0] in ("info", "system"), words
+        # `run`, `exec` and `start` sit here with the destructive verbs for a
+        # second property: the disk reading measures growth headroom and not
+        # the daemon's internal free space, and the better figure is one
+        # container launch away. This is where "no container is started to
+        # improve a number" is enforced rather than promised in a docstring.
         for verb in ("prune", "rm", "rmi", "create", "build", "load",
-                     "import", "kill", "stop"):
+                     "import", "kill", "stop", "run", "exec", "start"):
             assert verb not in words, (words, verb)
     assert D.DOCKER_READ_ONLY["usage"][:2] == ("system", "df"), \
         D.DOCKER_READ_ONLY["usage"]
@@ -658,7 +686,7 @@ def nothing_here_prunes_anything():
         seen.append(list(argv))
         return "", "no daemon on this machine"
 
-    D.disk_available(run=run, images=())
+    D.disk_headroom(run=run, images=())
     D.reclaim_report(run=run)
     assert seen, "the preflight asked the daemon nothing at all"
     allowed = {tuple(v) for v in D.DOCKER_READ_ONLY.values()}

@@ -157,7 +157,7 @@ the credentials axis holds to.
 | the host's container daemon is withheld from the workflow container | the runner mounts it by default, which would hand a third-party pipeline control of the daemon running it |
 | `--timeout`, per repository, defaulted and overridable | 20 minutes by default, which is generous on purpose: a budget tight enough to cut a real run turns the measurement into a measurement of the host |
 | the clone is temporary and removed in a `finally` | including when the runner raised, so a failed run leaves nothing of somebody else's repository behind |
-| the disk is checked before the first repository and again between each of them, and refuses below a 10 GB floor unless `ALLOW_LOW_DISK=1` | the risk is the machine rather than this tool's own appetite. Below the floor mid-run it stops with the results it already has, because a short run whose results survive is worth more than a long one that dies on a full disk |
+| the daemon's growth headroom is checked before the first repository and again between each of them, and refuses below a 10 GB floor unless `ALLOW_LOW_DISK=1` | the risk is the machine rather than this tool's own appetite. Below the floor mid-run it stops with the results it already has, because a short run whose results survive is worth more than a long one that dies on a full disk. What it cannot see is a daemon that is internally full, which the Disk notes below set out |
 | one at a time, with pacing between clones | the clones come from a mirror rather than from the upstream host, and a mirror on a constrained allocation finds a clone far more expensive than an API read |
 
 ### What you need installed, and what it costs
@@ -189,22 +189,39 @@ toolchain versions costs more than one that shares them. A first run of eight
 repositories therefore wants single-digit gigabytes, not tens.
 
 **That is not the figure to plan around.** The run refuses to start below **10
-GB available to the container daemon**, and re-reads the figure between
-repositories, because the machine is the risk and not this tool's appetite: the
-host this was developed against carried 60 GB of images, 58 GB of volumes and
-47 GB of build cache from unrelated work against 54 GB of free space, and a
-multi-hour run that dies at repository six has cost hours and produced nothing.
-The refusal names the floor, what it found and how much to free. Dropping below
-the floor part way through stops the run with the results it already has and
-records the stop in the output. `ALLOW_LOW_DISK=1` proceeds anyway, in the same
-shape as `ALLOW_LARGE_SAMPLE`.
+GB of growth headroom for the container daemon**, and re-reads the figure
+between repositories, because the machine is the risk and not this tool's
+appetite: the host this was developed against carried 60 GB of images, 58 GB of
+volumes and 47 GB of build cache from unrelated work against 54 GB of free
+space, and a multi-hour run that dies at repository six has cost hours and
+produced nothing. The refusal names the floor, what it found and how much to
+free. Dropping below the floor part way through stops the run with the results
+it already has and records the stop in the output. `ALLOW_LOW_DISK=1` proceeds
+anyway, in the same shape as `ALLOW_LARGE_SAMPLE`.
 
 The figure is the **daemon's** wherever it can be read, not the host's: on
 macOS the daemon runs in a VM with a disk of its own, so a host with room to
 spare says nothing about whether the next image pull fits. Where only the host
 figure can be read, the output records that substitution rather than passing it
-off as the daemon's. What was available at the start and at the end of the run
-is recorded either way, so a reader can see what the run cost.
+off as the daemon's. The headroom at the start and at the end of the run is
+recorded either way, so a reader can see what the run cost.
+
+**What the guard measures is growth headroom, and it is not the daemon's own
+free space.** Where the daemon runs in a VM, the reading is how much further
+that VM's disk image could grow into the host disk. So the guard protects
+against filling the **host**; it does not detect a daemon that is internally
+full. Those two differ, and in the direction that matters: a daemon whose own
+filesystem is full while the host still has room passes the preflight, and the
+symptom is a run that fails on a write although the preflight said yes. If that
+is what you are looking at, the disk to free is the daemon's, not the host's.
+The limitation travels with the figure, in the printed preflight and in
+`differential_execution.json`.
+
+The better figure is one container launch away and this tool does not take it.
+`DOCKER_READ_ONLY` is every Docker command the module issues, each of them a
+read, and nothing here creates a Docker object of any kind. That property is
+worth more than a better number on a machine the tool was pointed at rather
+than given, so the limitation is published instead of being measured away.
 
 **Nothing is ever reclaimed for you.** The images, volumes and build cache on
 the machine belong to whoever owns it, and a measurement instrument that
