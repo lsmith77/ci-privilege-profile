@@ -14,6 +14,7 @@ says which.
 | `ciprofile/sweep.py` | Discovery, and what a failure means |
 | `ciprofile/cache.py` | The evidence cache, and refusing to misread one |
 | `ciprofile/report.py` | The profile JSON and the printed summary |
+| `ciprofile/differential.py` | Running the pipeline with nothing granted; the guards that make it safe to, and what a failure is allowed to be read as |
 | `ciprofile/sources/` | One adapter per forge, behind one interface |
 | `fixtures/ci/` | Synthetic repositories and the table they must classify as |
 
@@ -102,6 +103,16 @@ ones whose failure is invisible in the output:
 | Make `empty_verdict()` read "the source did not say" as empty | "an unreadable repository is unknown, never no-pipeline" |
 | Stop consulting the `push:` input of the build-and-push action | "a conditional push: input is still a push", and the fixture table |
 | Make the line reader refuse a sequence at its key's own column | "a steps: block at its own column still yields steps" |
+| Drop the missing-sample or the ceiling refusal in `require_sample()` | "--sample is required, with no default", "a sample above the ceiling is refused" |
+| Point the differential runner's `--secret-file` at `.secrets`, or drop the flag | "the runner is never given a secret, default file included" |
+| Stop scrubbing credential-shaped variables in `scrubbed_env()` | "credential-shaped variables leave the environment" |
+| Leave the duration suffix on the runner's result line in `STEP_RESULT` | "the real log format is what is parsed" |
+| Match the credential table against the whole log instead of the failing step | "a credential warning in another step does not convict" |
+| Consult the credential table before `RUNNER_LIMIT` in `classify_outcome()` | "the runner's own inability outranks the credential table" |
+| Make the fall-through in `classify_outcome()` read as having executed | "an unrecognised failure claims nothing" |
+| Lower `RUNNER_MIN`, or take the first runner on PATH rather than the newest | "a runner too old to run the corpus is refused", "the newest runner on PATH wins" |
+| Signal the runner alone rather than its process group on a timeout, or stop asking the session to stop at all, or start it in this session | "a budget that runs out takes the whole session with it", "run_workflow stops the session when the budget runs out" |
+| Drop the refusal in `_stop_session()` to signal the group it is running in | "stopping never signals the group it is running in" |
 
 One rule follows from mutation testing and is not negotiable: **a test that can
 destroy data is a bug in the test.** Mutation testing deliberately breaks the

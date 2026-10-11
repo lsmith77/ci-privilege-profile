@@ -20,14 +20,25 @@ paced, and it under-claims whenever it cannot read something.
 First, because it is where this tool differs from what you would assume it
 does.
 
-**It does not run anything.** Every figure is signal detection over pipeline
-text plus a structural reading of it. A rule can miss a signal (an action no
-table has heard of, a deploy behind a `make release` target, a command
-assembled from variables), and every miss pushes a repository *toward*
-"self-contained", the flattering direction. A rule can also over-claim: the
-string `docker push` in a disabled job reads the same as a live one. The
-per-repository answer is a hint; a distribution over a corpus is a shape.
-Neither is a measurement.
+**The distributions do not run anything.** Every figure in them is signal
+detection over pipeline text plus a structural reading of it. A rule can miss a
+signal (an action no table has heard of, a deploy behind a `make release`
+target, a command assembled from variables), and every miss pushes a
+repository *toward* "self-contained", the flattering direction. A rule can also
+over-claim: the string `docker push` in a disabled job reads the same as a live
+one. The per-repository answer is a hint; a distribution over a corpus is a
+shape. Neither is a measurement.
+
+There is one exception and it is deliberately small. `ciprofile.differential`
+runs a named handful of repositories' pull-request workflows in a container
+with **no secret supplied**, and observes whether they execute. That reaches
+the cases reading cannot, because it does not have to *find* the test command,
+and a repository it reads as having run is the only per-repository claim here
+worth quoting. It is a handful on purpose: it executes third-party code, the
+sample size has no default, and its selection rule picks for what a local
+runner can execute, so its distribution is not a distribution over anything.
+[EXPERIMENTS.md](EXPERIMENTS.md#differential-execution-running-the-pipeline-with-nothing-granted)
+has what a first sample of it measured.
 
 **It cannot tell you what a privilege is FOR, most of the time.** The tool
 tries: a secret that only uploads coverage can be skipped, while a secret that

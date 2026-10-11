@@ -103,6 +103,79 @@ could prove something about 17 repositories. [That is itself a
 finding](EXPERIMENTS.md#observation-instead-of-inference-fork-pull-request-outcomes),
 and not the one that was expected.
 
+## Running it instead of reading it
+
+```sh
+python3 -m ciprofile.differential \
+    --profile data/ci_profile.json --cache data/ci_cache.json \
+    --sample 8 --dry-run
+```
+
+Every other mode reads pipeline text. This one runs it: each selected
+repository's pull-request workflows execute locally, in a container, with **no
+secret of any kind supplied**, and the outcome is observed. It is the only
+figure here that is not signal detection, and it reaches the cases static
+reading cannot, because it does not have to *find* the test command.
+
+**It executes untrusted third-party code on the machine you run it from.** A
+pipeline is a script somebody else wrote for infrastructure they chose. It is
+confined to a container, given no secret and no access to the host's container
+daemon, and the clone is deleted afterwards; none of that makes it safe to
+point at an arbitrary corpus, and `--dry-run` prints the selection and the
+exact command without running anything. Start there.
+
+**The measured outcome is not a green workflow.** Most pipelines fail under a
+local runner for reasons that have nothing to do with privilege, so "green"
+would measure the runner. The question is whether the check *executed*, with
+nothing granted, without failing for a secret-related reason. Six outcomes,
+three of which answer it:
+
+| outcome | what it is evidence of |
+| --- | --- |
+| `ran-unprivileged` | every step ran and the job exited zero. Nothing granted was needed, and this is the one class that rests on an absence rather than on reading a log |
+| `ran-with-failures` | a project command executed and failed on its own merits. Still an answer: the pipeline reached the project's own code with nothing granted |
+| `secret-required` | the failing step's own output names a missing, empty or rejected credential |
+| `environment-failure` | it failed for a reason belonging to the runner. **Proves nothing** |
+| `timed-out` | the per-repository budget ran out. **Proves nothing** |
+| `not-attempted` | the clone failed, or no job was found. **Proves nothing** |
+
+The classification of *failures* is heuristic and the positive case is not.
+`ran-unprivileged` holds because no secret file is read, no secret is passed,
+and credential-shaped variables are taken out of the runner's environment, so
+nothing could have consumed one. Every other class is a reading of log text,
+and **an unrecognised failure falls to `environment-failure`**, which supports
+no claim in either direction. The asymmetry is deliberate and is the same one
+the credentials axis holds to.
+
+### The guards, and why each is there
+
+| | |
+| --- | --- |
+| `--sample` is required, with no default, and refuses above a low ceiling unless `ALLOW_LARGE_SAMPLE=1` | the thing being multiplied is a container running somebody else's build, so a typo costs hours, and the consent question scales with it |
+| no secrets file, in any spelling | the runner's *default* is to read `.secrets` from its working directory, which here is a clone of somebody else's repository. It is pointed at the null device, and the command line has no flag that could supply one |
+| the runner's working directory is never the clone | it reads an `.actrc` out of its working directory, so a file in the corpus could otherwise add flags to the command measuring it |
+| the host's container daemon is withheld from the workflow container | the runner mounts it by default, which would hand a third-party pipeline control of the daemon running it |
+| `--timeout`, per repository, defaulted and overridable | 20 minutes by default, which is generous on purpose: a budget tight enough to cut a real run turns the measurement into a measurement of the host |
+| the clone is temporary and removed in a `finally` | including when the runner raised, so a failed run leaves nothing of somebody else's repository behind |
+| one at a time, with pacing between clones | the clones come from a mirror rather than from the upstream host, and a mirror on a constrained allocation finds a clone far more expensive than an API read |
+
+### What you need installed, and what it costs
+
+A container daemon, and `act` (a local GitHub Actions runner) **at 0.2.50 or
+newer**. The floor is enforced rather than suggested: an older runner refuses
+every action built on a Node runtime newer than node16, which is nearly every
+action in current use, so a corpus measured with one would report an
+environment failure almost everywhere and the distribution would read as a
+finding. If the host carries two installs, put both directories on PATH; the
+newest is the one used, so that PATH order does not decide what the
+measurement says.
+
+The runner reads GitHub Actions and no other grammar, so a GitLab, Woodpecker
+or Jenkins pipeline cannot be sampled at all. **On an ARM host the runner
+images are amd64 and run under emulation**, which dominates the cost: a small
+dependency install and build takes minutes rather than seconds, and the first
+repository also pays for the image pull. Budget accordingly.
+
 ## Outputs
 
 | File | What it is |
@@ -111,6 +184,7 @@ and not the one that was expected.
 | `ci_cache.json` | **Evidence, not conclusions.** Everything the sweep fetched, so a rule change costs no requests |
 | `ci_profile_from_cache.json` | A cached re-analysis, which never overwrites the sweep's own profile |
 | `fork_pr_profile.json` | The fork observation |
+| `differential_execution.json` | A differential-execution run: the outcome per repository, the selection rule, and the runner it used |
 
 Each writer refuses the other files' names, by basename. A sweep of a sizeable
 corpus costs hours, and a mode that overwrote another mode's output would
@@ -141,6 +215,9 @@ Within those, in descending order of how much weight they will bear:
 | The `test-step-*` tally (what the step invoking the tests consumes) | **Yes** as three numbers together; the not-identifiable count is part of the answer |
 | "Contributor-runnable if reporting steps are dropped" | **Only with its uncertainty band**, which is usually larger than the figure |
 | "With a test suite that runs unprivileged" | **Only with the not-identifiable count beside it**, which is the larger number; it is a positive claim about the test steps the tool could find, never about the ones it could not |
+| A differential-execution `ran-unprivileged` or `ran-with-failures` | **Yes, per repository**, which nothing else here is: the pipeline ran with nothing granted. Where the workflow holds no recognised test invocation it is a claim about the pull-request check and not about a test suite, and the output says which |
+| A differential-execution `secret-required` | **Only with the log line beside it.** It is a reading of the failing step's output, and the reading is heuristic where the positive case is not |
+| A differential-execution distribution | **No.** The sample is selected for what a local runner can execute, which is a selection on the properties under measurement. Report the per-repository outcomes, not a share |
 | Any single repository's label | **No.** It is a hint. Read its `signals`. |
 | Anything from `--limit`, a GitLab sample, or a partial cache | **No.** Every such output marks itself partial, loudly |
 
