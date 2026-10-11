@@ -1,0 +1,17 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# A repository that does CI, and none of it on a pull request. Its own state in
+# the pull-request scope: calling it no-pipeline would say the project does no
+# CI, which is false and inflates the figure most likely to be quoted.
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: twine upload dist/*
+        env:
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}

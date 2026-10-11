@@ -1,0 +1,19 @@
+name: test
+on:
+  pull_request:
+
+# The case the whole axis exists for. The tests need nothing granted, and the
+# only secret in the file reaches one step, which uploads the coverage the
+# tests produced. A contributor who skips that step runs everything else on
+# their own runner, so the repository is read-credential and still
+# contributor-runnable, which is the figure `self-contained` alone cannot report.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pytest -q --cov --cov-report=xml
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml

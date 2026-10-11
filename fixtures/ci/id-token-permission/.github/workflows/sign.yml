@@ -1,0 +1,19 @@
+name: sign
+on:
+  pull_request:
+
+# Keyless. The OIDC token the grant mints is what authenticates the publish and
+# the signature, so there is no secret reference and no credential-shaped
+# variable name anywhere in the file: the permission is the whole of the
+# evidence, and without it this reads as a build that writes nowhere.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run sign

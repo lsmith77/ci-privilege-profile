@@ -1,0 +1,25 @@
+name: ci
+on:
+  pull_request:
+
+# Real cloud authentication, and a test suite after it. The credential is not a
+# record of what the run found and it is not droppable either: the integration
+# tests reach the account it opens, so without it there is nothing to run. So
+# the axis answers test-time rather than shrugging, and nothing in this file
+# spends the credential outward, which is the other half of the rule.
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TEST_ROLE }}
+          aws-region: eu-central-1
+      - run: pytest -q tests/integration

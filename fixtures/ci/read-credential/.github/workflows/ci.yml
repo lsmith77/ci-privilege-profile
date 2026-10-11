@@ -1,0 +1,16 @@
+name: ci
+on:
+  - push
+  - pull_request
+
+# A secret that only ever fetches: the dependency sits in a private registry
+# and the job publishes nothing.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.PRIVATE_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm test

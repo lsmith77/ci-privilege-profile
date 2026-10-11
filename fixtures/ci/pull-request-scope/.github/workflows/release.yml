@@ -1,0 +1,19 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+# The other file: the maintainer's publish, which a contributor never sets off.
+# Read together with the lint workflow it takes the whole repository to
+# writes-outward and, through the `&&`, takes thin-wrapper away, so the
+# pull-request scope has to be computed separately for either to survive. The
+# shape is near-universal in a mature project, so an unscoped reading
+# understates `self-contained` across the corpus rather than at its margin.
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

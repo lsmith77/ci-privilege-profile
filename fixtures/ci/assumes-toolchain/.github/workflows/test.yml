@@ -1,0 +1,19 @@
+name: test
+on: [pull_request]
+
+# `self-contained` and "would run on a bare container" are different questions, and
+# this is the case that separates them: nothing here needs a secret, writes
+# anywhere or asks for a runner label, so the class is self-contained. The job
+# still assumes node is installed, which is what a shared standard runner
+# image would have to carry. Recorded as evidence beside the class, never as
+# the class.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm test

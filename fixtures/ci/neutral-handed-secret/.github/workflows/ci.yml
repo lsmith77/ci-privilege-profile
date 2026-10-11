@@ -1,0 +1,23 @@
+name: ci
+on:
+  pull_request:
+
+# The edge the neutral list must not swallow. `actions/checkout` consumes no
+# privilege of its own and is on the list, but handed a personal access token
+# it is reading something the forge's own token does not reach, and that is a
+# credential a contributor would have to be given. Membership never overrides a
+# credential handed to the step, so this step is judged on the secret like any
+# other, nothing recognises what the secret is for, and the scope is unclear
+# despite the coverage upload beside it.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: example/private-fixtures
+          token: ${{ secrets.FIXTURES_PAT }}
+      - run: pytest -q --cov --cov-report=xml
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

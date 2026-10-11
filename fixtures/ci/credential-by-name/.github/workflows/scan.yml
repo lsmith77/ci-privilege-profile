@@ -1,0 +1,14 @@
+name: scan
+on: [push, pull_request]
+
+# The name scan's other half, in Actions grammar rather than GitLab's: the
+# secret reaches the step as a plain shell variable, so its name is the only
+# evidence there is, and `API_KEY` is a credential a contributor would have to
+# be given. The job only ever reads with it.
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: curl -sS -H "Authorization: Bearer $API_KEY" https://example.org/rules.json -o rules.json
+      - run: pytest -q --rules rules.json

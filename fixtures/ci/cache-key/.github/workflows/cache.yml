@@ -1,0 +1,22 @@
+name: test
+on: [push, pull_request]
+
+# `CACHE_KEY` ends in `_KEY` and is not a credential: nothing here has to be
+# given to a contributor. Matched by the suffix rule alone the repository
+# classifies read-credential, which is a variable name moving the one figure
+# the classification exists to produce, so the name is on NOT_CREDENTIAL.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache-key
+        run: |
+          CACHE_KEY=deps-$(sha256sum requirements.txt | cut -c1-16)
+          echo "value=$CACHE_KEY" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ steps.cache-key.outputs.value }}
+      - run: pip install -r requirements.txt
+      - run: pytest -q

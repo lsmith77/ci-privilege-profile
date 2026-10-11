@@ -1,0 +1,32 @@
+name: ci
+on:
+  pull_request:
+
+# A grant nothing consumes. `pull-requests: write` is declared for a step that
+# does not exist here. This is the commonest shape in the corpus, since a
+# permissions block is copied between workflows and survives the step it was
+# added for.
+# Nothing in the file names the forge token either, so there is no step the
+# grant could be scoping, and it is recorded as unused rather than deciding the
+# verdict. The scope needs no privilege at all, so it carries no credentials-*
+# flag; the grant still ranks the class, which is a question for the ladder and
+# not for this axis.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: pytest -q --junitxml=results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results
+          path: results.xml

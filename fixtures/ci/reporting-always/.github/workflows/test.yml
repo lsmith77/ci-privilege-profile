@@ -1,0 +1,21 @@
+name: test
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+# The second signal, where the first has nothing to match: the dashboard this
+# posts to is nobody's published action, so the step's tool says nothing about
+# its purpose. How the step is written says it instead. `if: always()` is not
+# how a step the tests depend on is written: a step that still runs after the
+# tests failed cannot be one the tests needed.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./run-tests.sh
+      - name: record the run
+        if: always()
+        run: curl -sS -X POST -H "Authorization: Bearer $DASHBOARD_TOKEN" https://quality.example.org/runs
+        env:
+          DASHBOARD_TOKEN: ${{ secrets.DASHBOARD_TOKEN }}

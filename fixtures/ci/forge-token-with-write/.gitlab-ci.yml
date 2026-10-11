@@ -1,0 +1,11 @@
+stages:
+  - release
+
+# The other half of the split, in the grammar where the token is detected by
+# variable name rather than by a `secrets.` reference: the forge's own token
+# is referenced *and* the job writes through the forge API, so acts-on-forge
+# is carried by the forge-write signal and the carve-out changes nothing.
+release-notes:
+  stage: release
+  script:
+    - curl --header 'JOB-TOKEN: $CI_JOB_TOKEN' --request POST '$CI_API_V4_URL/projects/42/releases'

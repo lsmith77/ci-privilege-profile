@@ -1,0 +1,12 @@
+name: lint
+on:
+  pull_request:
+
+# The whole case for scoping, in two files. This is everything a contributor's
+# pull request runs: one thin invocation, no secret, no outward write.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./lint.sh

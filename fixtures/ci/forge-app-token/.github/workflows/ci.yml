@@ -1,0 +1,29 @@
+name: ci
+on:
+  pull_request:
+
+# Minting a forge token from a GitHub App, which is forge-side privilege: the
+# token the step hands the rest of the job carries the App's write scopes. It
+# is also not the forge's own auto-minted token: the App id and private key
+# are secrets a contributor's host would have to be given, so the
+# carve-out that keeps `secrets.GITHUB_TOKEN` out of read-credential does not
+# reach it.
+#
+# The axis still reads unclear, and that is the right answer rather than a gap:
+# the mint says what the token *can* do and never what it is *for*, and the
+# comment step below could as easily have been a release.
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - run: pytest -q
+      - uses: marocchino/sticky-pull-request-comment@v2
+        if: always()
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          message: done

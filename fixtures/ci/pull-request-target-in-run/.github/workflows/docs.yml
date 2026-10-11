@@ -1,0 +1,14 @@
+name: docs
+on:
+  pull_request:
+
+# The over-claim the anchoring removes: `pull_request_target` as a string in a
+# step, not as a trigger. Matched anywhere in the file it raises the privileged
+# trigger flag on a workflow that has none, and that flag is one of the few
+# figures exact enough to quote outside, so it is held to the `on:` block.
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./check-links.sh docs/pull_request_target.md

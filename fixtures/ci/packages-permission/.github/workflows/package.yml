@@ -1,0 +1,18 @@
+name: package
+on:
+  pull_request:
+
+# The grant is the evidence. Nothing in the steps names a registry, because the
+# publish happens inside the build script, so `packages: write` is the only
+# thing in the file that says an artefact leaves it.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run package

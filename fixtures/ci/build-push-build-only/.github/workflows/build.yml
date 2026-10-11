@@ -1,0 +1,25 @@
+name: build
+on:
+  pull_request:
+
+# Both halves of what the action's default means. `image-false` says outright
+# that nothing is published; `image-default` says nothing at all and gets the
+# same behaviour from the action, which is why the action's presence cannot be
+# the signal on its own.
+jobs:
+  image-false:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/build-push-action@v5
+        with:
+          push: false
+          tags: example/app:ci
+
+  image-default:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/build-push-action@v5
+        with:
+          tags: example/app:ci

@@ -1,0 +1,6 @@
+# Output. A sweep's profile and its evidence cache describe one corpus at one
+# moment; they belong to whoever ran it, not to the repository.
+data/
+*.json.tmp
+__pycache__/
+*.pyc

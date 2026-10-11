@@ -1,0 +1,24 @@
+name: build
+"on":
+  pull_request:
+
+# The inverse signal, and the shape that makes it decisive. The credential is
+# what resolves the dependencies, so there is nothing here to compile without
+# it: no step records anything, and no contributor skips their way past a
+# private registry. The commonest cluster of this shape in the corpus is a
+# Maven build whose secret is named for the registry it reaches.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+      - uses: s4u/maven-settings-action@v3
+        with:
+          servers: >-
+            [{"id": "internal",
+              "username": "${{ secrets.MAVEN_USERNAME }}",
+              "password": "${{ secrets.MAVEN_PASSWORD }}"}]
+      - run: mvn -B verify

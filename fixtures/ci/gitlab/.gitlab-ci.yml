@@ -1,0 +1,20 @@
+stages:
+  - build
+  - deploy
+
+image: python:3.12
+
+build:
+  stage: build
+  script:
+    - make build
+
+deploy:
+  stage: deploy
+  environment: production
+  only:
+    - main
+  before_script:
+    - ./ci/install-key.sh
+  script:
+    - rsync -az --delete public/ deploy@www.example.org:/srv/www/

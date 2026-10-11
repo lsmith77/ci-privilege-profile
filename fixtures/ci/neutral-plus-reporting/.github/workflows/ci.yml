@@ -1,0 +1,34 @@
+name: ci
+on:
+  pull_request:
+
+# Build plumbing around one reporting step. The checkout, the toolchain setup,
+# the cache and the artifact upload consume no privilege, so none of them is a
+# privileged step nothing recognised and none of them costs the scope its
+# reporting-only reading, which is what the whole of NEUTRAL_ACTION exists to
+# protect. The coverage upload is the only privilege here, and it is a record
+# of the run.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv
+      - run: pytest -q --cov --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: actions/cache/save@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv

@@ -1,0 +1,22 @@
+name: comment
+on:
+  pull_request:
+
+# Why the axis spans every privileged class instead of sitting inside
+# read-credential. This is acts-on-forge, because the pipeline writes through
+# the forge API, which on a shared host is the trust decision, and it is as
+# contributor-runnable as an self-contained one, because all the forge privilege buys
+# is a comment saying what the check found.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make size-report
+      - uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: size-report.md

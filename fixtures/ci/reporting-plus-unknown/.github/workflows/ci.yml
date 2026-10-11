@@ -1,0 +1,19 @@
+name: ci
+on: [push, pull_request]
+
+# The asymmetry, as a file. One privileged step is recognised (the coverage
+# upload) and one is not: the sync reaches a bucket, and nothing readable here
+# says whether what it carries is a record of the run or something the next
+# stage needs. One unrecognised privileged step is enough, so the scope is
+# unclear and stays out of the contributor-runnable figure. Reporting-only is a
+# claim about every privileged step in a scope, and this file cannot support it.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pytest -q --cov --cov-report=xml
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - run: aws s3 sync build/ s3://example-artefacts/ci/
