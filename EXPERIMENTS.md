@@ -31,6 +31,89 @@ pipeline file. The first is the figure the tool exists to produce.
 
 ---
 
+## Why this class of corpus is hard to measure
+
+The bands in the entries below are wide, and most of the width is the corpus
+rather than the instruments. Signal detection over pipeline text, the
+credentials axis, the narrower test-step determination and the fork
+pull-request observation are independent of each other, and each one hit a
+different wall. The walls are not defects in the instruments: each is a
+property that a corpus of organisations releasing software without being
+software vendors tends to have, which is why they are set out here rather than
+inside any one entry.
+
+The figures are one corpus's, recomputed from its profile and its fork
+observation. The denominator is all 1428 classified repositories, organisation
+profile repositories included, which is the basis the entries below and
+`README.md` use; the run write-up in [results/](results/README.md) excludes
+those repositories and states the same quantities over 1409.
+
+**Most projects do not check pull requests.** 361 of 1428 repositories have a
+pipeline that a pull request triggers, a little over a quarter. 880 hold no
+pipeline this tool reads at all and 187 hold pipelines that no pull request
+sets off. Everything measured about contributor-side CI applies to that
+quarter; the rest of the corpus is outside the question rather than answered by
+it, and a share quoted without that denominator will be read as a share of the
+corpus.
+
+**Contribution from outside exists but is thin, and CI almost never runs on
+it.** 253 of the 1340 repositories the fork observation reached carry any fork
+pull request at all. Of the 326 fork pull requests landing on a repository that
+does check pull requests, 264 carried no check of any kind, four in five. That
+starves the one instrument that produces ground truth: a workflow that passes
+on a fork pull request proves it needs no repository secret, because the host
+withholds secrets from such runs, and that evidence is generated only where
+somebody let the check run. Across the 1340, the observation proved something
+about 17. [Observation instead of inference](#observation-instead-of-inference-fork-pull-request-outcomes)
+records the method and the join the unchecked figure cannot be quoted without.
+
+**The test command is usually not in the pipeline file.** Of the 361
+repositories with a pull-request-triggered pipeline, 220 yield no identifiable
+test invocation, roughly three fifths. The tests sit behind a project shell
+script, a make or task target, a reusable workflow in another repository, or a
+composite action, and static reading cannot follow any of those. [Narrowing the
+band by asking only about the test
+step](#narrowing-the-band-by-asking-only-about-the-test-step) groups that
+residual by cause, and reading a sample of the largest group out of the
+evidence cache found no missing cluster worth a rule.
+
+**The purpose of a credential is not written down.** Configuration records that
+a secret is used, never what it is for. Of the 185 repositories whose
+pull-request scope holds a credential for the axis to classify, 24 read as
+recording a result and 6 as needed by the tests, while 155 read as neither:
+separating a credential the tests need from one that only uploads a result is
+undecidable from the file in most cases. [Separating a secret for the tests
+from a secret to record the
+results](#separating-a-secret-for-the-tests-from-a-secret-to-record-the-results)
+is that finding in full, including the attempts to narrow it.
+
+**A corpus of mirrors measures somebody else's runners.** Where the
+repositories are mirrors of upstreams hosted elsewhere, the pipelines were
+written for the upstream platform's hosted runners and have never run on the
+platform holding the mirror. Every repository in this corpus is such a mirror.
+The distribution therefore says what privilege those pipelines need and nothing
+about what they would cost the platform that holds them, which is the reading
+such a corpus most invites.
+
+**The instruments are not independent of the thing being measured.** Low
+contribution and unoperated checks are both what the measurement is trying to
+characterise and what prevents it from being characterised. The observation
+needs checked fork pull requests before it can produce evidence, and a corpus
+with little contribution and few operated checks supplies neither. No addition
+to the rule tables reaches that.
+
+What improves the figures is more evidence, not a closer reading of the same
+files. They improve as contribution accumulates, so re-running the observation
+over the same corpus later is the cheapest improvement available, and the
+baseline has to be taken before anything moves because no later sweep can
+reconstruct it. Generating the evidence directly, by executing a pipeline with
+its secrets stripped, is the only instrument that works on a repository nobody
+has contributed to; its cost and its consent problem are in the
+differential-execution entry under [approaches not
+tried](#approaches-not-tried).
+
+---
+
 ## Privilege-class ladder
 
 **The question.** For a repository, what single thing best describes what its

@@ -60,6 +60,15 @@ put in. A `--limit` produces a prefix of a listing, which is not a sample:
 when that was first tried on a name-ordered listing, 17 of the first 25
 repositories were organisation metadata repositories holding no software.
 
+**Most of the uncertainty above is the corpus, not the tool.** In the corpus
+this was developed against, only 361 of 1428 repositories have a pipeline a
+pull request triggers; 220 of those 361 yield no identifiable test invocation;
+and of the 326 fork pull requests landing on a repository that does check pull
+requests, 264 carried no check at all, which is what starves the one instrument
+that produces ground truth. [Why this class of corpus is hard to
+measure](EXPERIMENTS.md#why-this-class-of-corpus-is-hard-to-measure) sets out
+each property, the instrument it defeats, and the measured consequence.
+
 **Start with [EXPERIMENTS.md](EXPERIMENTS.md).** If you have a corpus of your
 own, that file says which parts of this design to keep and which to try
 differently.
