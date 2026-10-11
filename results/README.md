@@ -137,9 +137,10 @@ anything.
 - [ ] **Do the counts sum?** Each class distribution against its stated
       denominator, and each sub-table against its own total. A row that has
       drifted out of a table is the commonest defect here and the easiest to
-      catch: the join table in `EXPERIMENTS.md` has a row short by one
-      repository's worth, and it was published and then "corrected" into that
-      state without anybody adding the columns up.
+      catch: the join table in `EXPERIMENTS.md` was published with a row short
+      by one repository's worth, then "corrected" into that state a second
+      time, because nobody added the columns up. Adding them up is what found
+      it.
 - [ ] **Does the denominator match the stated corpus?** If the corpus
       description excludes a category, the denominator has to be smaller than
       the repository count by the size of that category, and the write-up has
