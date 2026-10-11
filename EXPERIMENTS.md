@@ -108,9 +108,8 @@ over the same corpus later is the cheapest improvement available, and the
 baseline has to be taken before anything moves because no later sweep can
 reconstruct it. Generating the evidence directly, by executing a pipeline with
 its secrets stripped, is the only instrument that works on a repository nobody
-has contributed to; its cost and its consent problem are in the
-differential-execution entry under [approaches not
-tried](#approaches-not-tried).
+has contributed to; what it decided on a first sample, and what it cost, are in
+[differential execution](#differential-execution-running-the-pipeline-with-nothing-granted).
 
 ---
 
@@ -642,8 +641,10 @@ point is a name only the project knows. One addition came out of the sample,
 are the same obstacle in three spellings: the command that runs the tests is
 somewhere this tool does not read. No extension of the command list reaches
 them, and the five `unidentified` rows together are the sample a
-[differential-execution](#approaches-not-tried) run would have to cover, which
-is the one approach that would.
+[differential-execution](#differential-execution-running-the-pipeline-with-nothing-granted)
+run would have to cover, which is the one approach that would. A first sample
+of eight drawn from exactly those rows answered four of them, so the approach
+does reach the band; what it does not reach is the scale.
 
 **What it led to.** The determination is kept, because 109 repositories with a
 test suite that demonstrably runs unprivileged is a stronger and narrower claim
@@ -890,6 +891,192 @@ the same reason the baseline in the previous entry was worth taking early.
 
 ---
 
+## Differential execution, running the pipeline with nothing granted
+
+**The question.** Every other entry here reads pipeline text, and the two
+entries above it end in the same place: the information wanted is not in the
+file. The purpose of a credential is not written down, and neither, more often,
+is the name of the command that runs the tests. **Execution does not have to
+find it.** Run the pull-request workflow with no secret supplied and watch:
+whether the tests are behind a project shell script, a `make` target, a
+`./gradlew build` or a devenv wrapper stops mattering, because the pipeline
+reaches them without any rule knowing they are there. This was listed under
+"approaches not tried" with the assessment that it was the right answer to the
+question and the wrong cost and consent model for an unsolicited survey. That
+assessment stands; what changed is that it was built as a small, named,
+opt-in-shaped instrument rather than as a measurement sweep, and run on eight
+repositories to see what it could decide.
+
+**The measured outcome is deliberately not a green run.** This is the design
+decision the rest of it hangs on. Most pipelines fail under a local runner for
+reasons that have nothing to do with privilege, so a green workflow would be a
+measurement of the runner. The question asked instead is whether the check
+**executed**, with nothing granted, without failing for a secret-related
+reason. If the project's own commands ran at all while nothing was granted,
+nothing granted was blocking them, whatever became of the rest of the run.
+
+**What was done.** Six outcomes, three of which answer the question and three
+of which are excluded from every share:
+
+- `ran-unprivileged`: every step ran and the job exited zero;
+- `ran-with-failures`: a project command executed and failed on its own merits;
+- `secret-required`: the failing step's own output names a missing, empty or
+  rejected credential;
+- `environment-failure`, `timed-out`, `not-attempted`: **proves nothing**.
+
+**The positive case is not a heuristic and the failure cases are.** That
+asymmetry is the whole of why this is reportable. `ran-unprivileged` rests on
+an absence enforced by construction rather than detected: no secret file is
+read, no secret is passed, credential-shaped variables are taken out of the
+runner's environment, so nothing could have consumed a secret. Every other
+class is a reading of log text, and **an unrecognised failure falls to
+`environment-failure`**, which supports no claim in either direction. A failure
+is read as `secret-required` only when the *failing step's own output* says so,
+and as `ran-with-failures` only when a positive signature of a check reaching a
+verdict matched. Ambiguity therefore costs a reading and never buys one, in
+either direction, which is the same asymmetry the credentials axis and the
+test-step determination hold to.
+
+Three details of the mechanism turned out to be load-bearing, and each was
+found by running it rather than by reasoning about it.
+
+**The credential table is matched against one step, not the log.** Matching the
+whole log was the obvious first shape and it is wrong in the one direction that
+matters: a local runner with no cache service emits credential-looking warnings
+twice per workflow, in steps that succeed, so every green run in the corpus
+would have read as needing a secret.
+
+**The runner's own inability is consulted first.** A local runner fetches
+actions from a public API unauthenticated, so its rate-limit rejection reads
+exactly like a project's missing token if the credential table is asked first.
+
+**The log format has to be read off the output.** The runner's result line
+carries a step duration its start line does not, so pairing a result with its
+step by name fails silently unless the duration is stripped. Leave it on and no
+step is ever paired, every run looks like one where nothing finished, and the
+whole corpus reads as an environment failure. A defect that turns a green
+distribution into an all-failures one looks exactly like a finding.
+
+**And a budget that runs out has to take the container with it.** Killing the
+runner outright leaves the container it was managing running, and that
+container then consumes the host while the *next* repository runs, so one
+timeout would quietly measure everything after it under contention. The runner
+is therefore started in a session of its own and the session is asked to stop
+before it is made to. Which brings its own trap, found the way these are
+usually found: the group signal is correct only because of that session, and a
+mutation test that removed it signalled the harness's own group and killed the
+run. There is now a guard against signalling the group the code is running in,
+and the check for it runs the scenario in a child, because a check cannot
+report a failure from inside a process it has just killed.
+
+**Measured effect: it answered half of a sample chosen for being answerable,
+and every answer went the same way.** Eight repositories, all drawn from the
+band static reading could not resolve, all of them carrying
+`test-step-unidentified`:
+
+| outcome | repositories |
+| --- | ---: |
+| ran-unprivileged | 3 |
+| ran-with-failures | 1 |
+| secret-required | 0 |
+| **environment-failure** | **4** |
+| timed-out | 0 |
+| not-attempted | 0 |
+
+So **four of eight now have an answer, and all four are in the same direction**:
+the pull-request check ran with nothing granted. None needed a credential. The
+single most useful case is the `ran-with-failures` one, because it is the band's
+central case resolved: the configuration names no test command, the tests sit
+behind a build target, and the run shows a suite of seventeen tests executing
+and eleven of them failing, with no secret present. **Execution supplied the
+evidence the configuration withheld**, which is exactly what reading could not
+do and exactly why the three largest `unidentified` buckets in the entry above
+are the sample this had to cover.
+
+**The cost, which is the reason it is not a sweep.** 16.7 minutes across eight
+repositories, clone included and pacing between them excluded: a mean of 125
+seconds each, from 6.5 seconds for one that failed at its first step to 303
+seconds for a JVM build that ran its suite. On an ARM host the runner images
+are amd64 and run under emulation,
+which dominates that figure, and the first repository of a corpus also pays for
+the image pull, measured separately at about four minutes. That is two to three
+orders of magnitude more expensive per repository than reading the text, and it
+is the floor rather than the average, because the sample was chosen for small
+workflows and recognised toolchains.
+
+**What the selection rule costs, stated because it is severe.** From the
+repositories with a pull-request-triggered pipeline, dropping those static
+reading already resolved leaves the unresolved band; of that band, the filters
+for what a local runner can execute leave fewer than a third:
+
+| dropped by | repositories |
+| --- | ---: |
+| resolved by static reading | 88 |
+| no recognised toolchain, so a failure would not be interpretable | 123 |
+| not entirely in the one pipeline grammar the runner reads | 35 |
+| asks for an environment the runner cannot provide | 17 |
+| `special-env` in either scope | 17 |
+| a second repository from one owner | 9 |
+
+**This is not a sample of the corpus and nothing from it extrapolates.** The
+rule selects for what a local runner can execute and for cases where a failure
+could be read, which is a selection on precisely the properties under
+measurement. The per-repository outcomes are the result; the distribution is
+not.
+
+**Limitation that remains.** Four of the eight proved nothing, in a sample
+chosen for being runnable, and the causes are instructive: a package manager
+the runner image does not carry, a headless browser binary absent from it, a
+language's refusal to install into a system environment, and a container
+orchestration command that was missing because **this harness deliberately
+withholds the host's container daemon from the workflow container**. That last
+one is a design choice paying for itself in the honest direction: the runner
+mounts the daemon's socket by default, which hands a third-party pipeline
+control of the daemon running it, and an honest "proves nothing" is the right
+price for not doing that.
+
+Three of those four reached `environment-failure` through the fall-through
+rather than through a named pattern. The outcome is right either way, by
+construction, but the *reason* recorded is then only "this recognises nothing
+here", so the named environment table is thinner than a corpus of this shape
+needs. That is the cheapest available improvement and it changes no outcome.
+
+The two structural limits are harder. The runner reads one pipeline grammar,
+which is a selection constraint and not a fixable gap. And a runner older than
+the enforced floor refuses every action built on a modern Node runtime, so a
+corpus measured with one would report an environment failure almost everywhere
+and the distribution would read as a finding; the floor is checked rather than
+documented for that reason, and the newest runner on PATH is the one used, so
+that PATH order does not decide what the measurement says.
+
+**And the consent question is unchanged.** This executes code its maintainers
+wrote for infrastructure they chose, in an environment they did not pick. That
+is why the sample size has no default in any spelling, why there is a low
+ceiling above it, and why the plan is printed before anything runs. The
+instrument is the right shape for a project pointing it at its own
+repositories, or for maintainers opting in. It is not the right shape for a
+survey, and building it has not changed that.
+
+**What it led to.** It is kept, as the only per-repository claim in this
+repository worth quoting, and `ciprofile.differential` is where it lives. Four
+repositories whose pipelines demonstrably run with nothing granted is a
+stronger statement than anything the static side produces about them, and it
+was produced for cases the static side had given up on. It is kept small: a
+named handful, with the selection rule and its caveat travelling in the output
+file beside the outcomes.
+
+**If you are starting fresh.** Build this, and make the measured outcome
+"did it execute" rather than "did it pass" before you write a line of it;
+the second question measures your runner and will waste the whole exercise.
+Then decide, on paper, which class an unrecognised failure falls into, because
+that single decision determines whether the instrument under-claims or
+flatters, and it is very hard to change afterwards. And read your runner's
+actual log output before writing anything that parses it. Two of the three
+defects that cost real time here were differences between what the runner
+prints and what its documentation says it prints.
+
+---
+
 ## A destructive test
 
 **The question.** Does the "never overwrite the corpus files" guard actually
@@ -923,29 +1110,6 @@ guard, not for being careful with the test.
 
 With an assessment of each, so the next person can disagree with the
 assessment rather than rediscover the option.
-
-### Differential execution
-
-Strip the secrets, run the workflow in a sandbox, see whether the tests pass.
-This is **ground truth** and it would answer directly the question the whole
-reporting-versus-test-time axis failed to answer. It is also expensive (a
-container per workflow, network egress controls, a runner implementation per
-forge grammar) and flaky in ways that have nothing to do with privilege: a
-pipeline that fails because a registry was down is not a pipeline that needed a
-secret.
-
-The harder objection is not technical. Running somebody else's CI, at scale,
-without asking, raises a consent question: it executes code the maintainer
-wrote for their own infrastructure, in an environment they did not choose, and
-the result then gets published against their project's name. For a corpus of
-any size that is not a thing to do quietly. A consented version (maintainers
-opting in, or a project running it against its own repositories) is a
-different and entirely reasonable proposition, and would be the strongest
-evidence available.
-
-**Assessment: the right answer to the question, and the wrong cost and the
-wrong consent model for an unsolicited survey.** Worth building as an opt-in
-tool, not as a measurement instrument.
 
 ### A graph representation of step-to-privilege edges
 
