@@ -276,6 +276,103 @@ TIMEOUT_DEFAULT = 1200
 # container on this host.
 CLONE_PACE = 5.0
 
+# ------------------------------------------------------------ the disk
+#
+# THE RISK IS NOT THIS HARNESS'S OWN APPETITE. The tooling is measured: the
+# runner image is 1.63 GB and the `act-toolcache` volume it fills is 1.57 GB,
+# so roughly 3.2 GB before a single repository has been run, and transient
+# container layers per repository on top. That is small. What is not small is
+# the machine it lands on: the host this was developed against carried 60 GB of
+# images, 58 GB of volumes and 47 GB of build cache from work that has nothing
+# to do with this tool, against 54 GB of free space. Starting a multi-hour run
+# there is how a measurement ends with no results and somebody else's build
+# broken by a full disk.
+#
+# So there is a floor, it refuses before the first repository, and it is
+# re-read between repositories. It sits well above the 3.2 GB the tooling
+# needs, and the margin is the point:
+#
+#   3.2 GB  the tooling, paid once, before anything useful has happened
+#   ~2 GB   one repository's transient layers, plus what the toolcache keeps of
+#           a toolchain version it has not seen. Containers are removed per
+#           workflow so these do not accumulate, but one of them has to fit
+#   rest    margin, because this is somebody's working machine. A measurement
+#           instrument that drives a shared disk to its last gigabyte has
+#           broken something it was never asked to touch
+#
+# It is a floor and not a budget. A sample whose repositories each want a
+# different toolchain can need several times this, which is why the figure is
+# re-read between repositories rather than trusted once at the start.
+DISK_FLOOR = 10 * 1000 ** 3
+LOW_DISK_ENV = "ALLOW_LOW_DISK"
+
+# How long the daemon is given to answer a question about itself. Short,
+# because these are local reads, and a preflight that hangs is worse than one
+# that falls back to the host figure and records that it did.
+DOCKER_ASK_TIMEOUT = 20
+
+DOCKER = "docker"
+
+# EVERY DOCKER COMMAND THIS MODULE RUNS, named here and nowhere else. Both are
+# reads. docker_read() refuses anything absent from this table, so "this tool
+# never changes a Docker object" is a property of a list a reader checks in one
+# glance rather than of a habit spread over a module.
+DOCKER_READ_ONLY = {
+    "root": ("info", "--format", "{{.DockerRootDir}}"),
+    "usage": ("system", "df", "--format", "{{json .}}"),
+}
+
+# Where Docker Desktop keeps the VM's disk image on macOS. Needed because the
+# daemon's own root directory is inside that VM and does not exist on this
+# filesystem at all, so asking the host about it answers a different question.
+VM_DISK_IMAGE = (
+    "~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
+    "~/Library/Containers/com.docker.docker/Data/vms/0/Docker.raw",
+)
+
+READ_FROM_ROOT = "the daemon's own storage directory, {}"
+READ_FROM_IMAGE = "the daemon's VM disk image, {}"
+READ_FROM_HOST = "the host filesystem at {}"
+
+IMAGE_LIMITATION = (
+    "A LOWER BOUND rather than the daemon's own reading. The VM's disk image "
+    "is sparse, so what is reported is the remainder of its declared size that "
+    "the VM has never written; a block the VM has since freed may still be "
+    "allocated on the host and is counted as used here. The figure is capped "
+    "by the host filesystem as well, because the image can only grow into it. "
+    "It therefore errs toward refusing a run that would have fitted.")
+HOST_LIMITATION = (
+    "THE DAEMON'S OWN FIGURE COULD NOT BE READ, so this is the host "
+    "filesystem and not the disk the containers are written to. The two differ "
+    "whenever the daemon runs in a VM or on another machine, and in that case "
+    "the host figure can be generous by any amount. Why it could not be read: "
+    "{}")
+NO_FIGURE_LIMITATION = (
+    "NEITHER THE DAEMON NOR THE HOST COULD BE READ, so there was no figure to "
+    "refuse on and the run was not stopped by one. Treat the run as having "
+    "had no disk preflight at all. Why: {}")
+
+RECLAIM_ADVICE = (
+    "Reclaiming is yours to decide and this tool never does it: a measurement "
+    "instrument that deleted the operator's data would be a worse failure than "
+    "a run that declined to start. `docker system df` lists what is there. "
+    "`docker image prune -a` removes unused images and `docker builder prune` "
+    "removes the build cache; both only cost a rebuild. `docker volume prune` "
+    "is the dangerous one, because a volume can hold the only copy of "
+    "something.")
+
+DISK_COMMENT = (
+    "What was available to the container daemon at the start and at the end of "
+    "the run, so a reader can see what it cost. `read_from` says which figure "
+    "it is: the daemon's own storage directory is exact, a VM disk image is a "
+    "lower bound, and the host filesystem is a substitute reported only when "
+    "nothing better could be read. `limitation` carries that caveat verbatim. "
+    "`stopped_early` is set when the floor was reached between repositories "
+    "and the run stopped with the results it had, which is why the "
+    "distribution above may cover fewer repositories than were selected. "
+    "Nothing was deleted to make room: this tool reads Docker's figures and "
+    "never changes a Docker object.")
+
 # Environment variables not handed to the runner. A credential-shaped name is
 # dropped whatever it holds. The local runner does not forward its own
 # environment into the workflow container, so this is belt and braces rather
@@ -459,6 +556,175 @@ def require_sample(sample, allow_large=None):
                 "third-party pipelines. Re-run with {}=1 if that is "
                 "deliberate.".format(sample, SAMPLE_CEILING, LARGE_SAMPLE_ENV))
     return None
+
+
+# ------------------------------------------------------------ the disk check
+
+
+def gb(count):
+    """Bytes in the same GB the daemon's own output uses, for an operator."""
+    return "unknown" if count is None else "{:.1f} GB".format(
+        count / 1000.0 ** 3)
+
+
+def low_disk_allowed(environ=None):
+    """Whether the operator has said in writing to proceed below the floor."""
+    environ = os.environ if environ is None else environ
+    return environ.get(LOW_DISK_ENV, "") not in ("", "0")
+
+
+def docker_read(what, run=None, docker=DOCKER):
+    """One allowlisted read-only docker command. (text, why it failed).
+
+    The allowlist is the guard. A name absent from DOCKER_READ_ONLY is refused
+    before anything is spawned, so a later call that wanted to free some room
+    has nowhere to go: this module reads Docker's figures and changes no Docker
+    object, and that is enforced here rather than promised in a comment.
+
+    `run` is the injection point for the whole of "ask the daemon something",
+    so the checks can drive the preflight without a daemon on the machine.
+    """
+    if what not in DOCKER_READ_ONLY:
+        return "", "not a read-only docker command: {!r}".format(what)
+    argv = [docker] + list(DOCKER_READ_ONLY[what])
+    if run is None:
+        def run(argv):
+            try:
+                proc = subprocess.run(argv, stdout=subprocess.PIPE,
+                                      stderr=subprocess.DEVNULL,
+                                      timeout=DOCKER_ASK_TIMEOUT)
+            except (OSError, subprocess.SubprocessError) as e:
+                return None, "`{}` did not run: {}".format(argv[0], e)
+            if proc.returncode != 0:
+                return None, "`{}` exited {}".format(
+                    " ".join(argv), proc.returncode)
+            return proc.stdout.decode("utf-8", "replace"), ""
+    text, reason = run(argv)
+    return (text or ""), (reason or "")
+
+
+def disk_available(scratch=None, run=None, images=VM_DISK_IMAGE):
+    """(bytes available to the daemon, how it was read, the limitation).
+
+    THE HOST FIGURE IS THE WRONG ANSWER and is the last resort here. What
+    fills during a run is the filesystem the daemon writes images, volumes and
+    container layers to, and on macOS that is a disk inside a VM: a host with
+    room to spare says nothing about whether the next image pull fits, and a
+    preflight that read the host would wave through exactly the run this
+    exists to stop.
+
+    So the daemon is asked where its root is, and three readings are possible,
+    in descending order of trust. If the root directory is on this filesystem,
+    that is the daemon's own disk and the figure is exact. If it is not, the
+    daemon is in a VM, and the VM's sparse disk image gives a lower bound. If
+    neither can be read, the host filesystem is reported with the substitution
+    stated in the limitation rather than passed off as the daemon's figure.
+    """
+    scratch = tempfile.gettempdir() if scratch is None else scratch
+    host, host_reason = None, ""
+    try:
+        host = shutil.disk_usage(scratch).free
+    except OSError as e:
+        host_reason = str(e)
+
+    text, reason = docker_read("root", run=run)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    root = lines[0] if lines else ""
+    if root and os.path.isdir(root):
+        try:
+            return shutil.disk_usage(root).free, READ_FROM_ROOT.format(root), ""
+        except OSError as e:
+            reason = "the daemon's root directory {} could not be read: {}" \
+                .format(root, e)
+
+    for candidate in images:
+        path = os.path.expanduser(candidate)
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        blocks = getattr(stat, "st_blocks", None)
+        if blocks is None:
+            continue
+        headroom = max(0, stat.st_size - blocks * 512)
+        if host is not None:
+            headroom = min(headroom, host)
+        return headroom, READ_FROM_IMAGE.format(path), IMAGE_LIMITATION
+
+    why = reason or (
+        "the daemon's root directory is {}, which is not on this filesystem"
+        .format(root) if root else "the daemon named no root directory")
+    if host is None:
+        return None, "nothing readable", NO_FIGURE_LIMITATION.format(
+            "; ".join(p for p in (why, host_reason) if p))
+    return host, READ_FROM_HOST.format(scratch), HOST_LIMITATION.format(why)
+
+
+def require_disk(available, floor=DISK_FLOOR, allow_low=None):
+    """Refuse a run the disk has no room for. The reason, or None.
+
+    The message carries the floor, what was found and the difference between
+    them, because "not enough space" sends the operator to go and measure
+    something this function has already measured. The escape hatch is named in
+    it for the same reason the sample ceiling names its own: the floor stops
+    an accident, and a deliberate run on a tight disk is a decision somebody
+    is allowed to make in writing.
+
+    An unreadable figure does not refuse. There is nothing to refuse on, and
+    guessing in either direction would be worse than saying so, which
+    disk_available() has already done in its limitation.
+    """
+    if allow_low is None:
+        allow_low = low_disk_allowed()
+    if available is None or available >= floor or allow_low:
+        return None
+    return ("only {} is available to the container daemon, below the {} floor "
+            "this mode needs. Free {} more, or re-run with {}=1 if running on "
+            "a disk this tight is deliberate.".format(
+                gb(available), gb(floor), gb(floor - available),
+                LOW_DISK_ENV))
+
+
+def reclaimable(run=None):
+    """[(kind, size, reclaimable)] out of the daemon's own usage report.
+
+    Quoted rather than recomputed: these are Docker's own pre-formatted
+    figures, and an arithmetic of our own over them would invent a precision
+    that the overlap between images and build cache does not support.
+    """
+    text, _reason = docker_read("usage", run=run)
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("Type"):
+            rows.append((row.get("Type"), row.get("Size", "?"),
+                         row.get("Reclaimable", "?")))
+    return rows
+
+
+def reclaim_report(run=None):
+    """What could be freed, and whose decision it is. Printed, never acted on.
+
+    The operator is the one who owns the machine and the data on it. So this
+    says what is there and which command removes it, and stops: an instrument
+    that pruned somebody's volumes to make room for its own measurement would
+    have destroyed data nobody asked it to touch, and a full disk is the
+    cheaper of the two failures.
+    """
+    rows = reclaimable(run=run)
+    if not rows:
+        return RECLAIM_ADVICE
+    lines = ["what the daemon reports is there:"]
+    for kind, size, free_able in rows:
+        lines.append("  {:<16} {:>10}, of which {} reclaimable".format(
+            kind, size, free_able))
+    return "\n".join(lines) + "\n" + RECLAIM_ADVICE
 
 
 # ------------------------------------------------------------ the runner call
@@ -903,16 +1169,49 @@ def plan(chosen, timeout, arch, runner=RUNNER):
 
 
 def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
-            pace=CLONE_PACE, runner=RUNNER, log=print):
-    """Run the sample. [per-repository record].
+            pace=CLONE_PACE, runner=RUNNER, log=print, space=None,
+            floor=DISK_FLOOR, allow_low=None, clone_fn=None, run_fn=None):
+    """Run the sample. (records, the interruption that stopped it, or None).
 
     The clone lives in a temporary directory that is removed in a `finally`,
     including when the runner raised, so a failed run leaves nothing of
     somebody else's repository on the host.
+
+    A RUN THAT STOPS EARLY WITH ITS RESULTS INTACT BEATS ONE THAT DIES WITH
+    NONE. The disk is re-read between repositories rather than trusted from
+    the preflight, because the preflight measured a machine that was not then
+    running containers, and the figure that matters is the one in front of the
+    next repository. Below the floor the loop breaks, the records so far are
+    returned, and the caller writes them: a sample of four answered
+    repositories is a result, and a run killed by a full disk at repository
+    five is not. The floor and the escape hatch are the preflight's own, so
+    there is one figure to argue with rather than two.
+
+    `space`, `clone_fn` and `run_fn` are injection points, for the same reason
+    `find_runner` takes `ask`: a check that had to fill a disk and start a
+    container to exercise the stop is a check nobody runs.
     """
-    records = []
+    space = (lambda: disk_available()[0]) if space is None else space
+    clone_fn = clone if clone_fn is None else clone_fn
+    run_fn = run_workflow if run_fn is None else run_fn
+    records, interruption = [], None
     for i, row in enumerate(chosen):
         if i:
+            available = space()
+            refusal = require_disk(available, floor=floor,
+                                   allow_low=allow_low)
+            if refusal:
+                interruption = {
+                    "stopped_before": row["repo"],
+                    "completed": len(records),
+                    "selected": len(chosen),
+                    "available_bytes": available,
+                    "available": gb(available),
+                    "reason": refusal,
+                }
+                log("\nSTOPPING with {} of {} done, results kept: {}".format
+                    (len(records), len(chosen), refusal))
+                break
             time.sleep(pace)
         log("[{}/{}] {}".format(i + 1, len(chosen), row["repo"]))
         record = dict(row)
@@ -921,7 +1220,7 @@ def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
         workdir = tempfile.mkdtemp(prefix="ciprofile-diff-")
         try:
             target = os.path.join(workdir, "repo")
-            if not clone(row["repo"], target, log=log):
+            if not clone_fn(row["repo"], target, log=log):
                 record["outcome"] = NOT_ATTEMPTED
                 record["reason"] = "the clone failed"
                 record["seconds"] = round(time.time() - started, 1)
@@ -929,7 +1228,7 @@ def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
                 continue
             for workflow in row["workflows"]:
                 budget = max(1, timeout - (time.time() - started))
-                outcome, reason, evidence, seconds, _text = run_workflow(
+                outcome, reason, evidence, seconds, _text = run_fn(
                     target, os.path.join(target, workflow), budget,
                     arch=arch, runner=runner, log=log)
                 log("    {}  {}  ({}s)".format(
@@ -949,7 +1248,7 @@ def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         records.append(record)
-    return records
+    return records, interruption
 
 
 # ------------------------------------------------------------ the output
@@ -1009,7 +1308,7 @@ def write(path, records, selection, meta):
     return path
 
 
-def summarise(records, log=print):
+def summarise(records, log=print, interruption=None):
     """The printed review gate: the outcome table and what it resolved."""
     tally = {}
     for record in records:
@@ -1032,6 +1331,11 @@ def summarise(records, log=print):
         log("  of those that ran, {} hold no command form recognisable as a "
             "test invocation, so the evidence is about the pull-request check "
             "and not about a test suite".format(len(blind)))
+    if interruption:
+        log("\nTHESE RESULTS ARE PARTIAL. The run stopped before {}, with {} "
+            "of {} selected repositories done: {}".format(
+                interruption["stopped_before"], interruption["completed"],
+                interruption["selected"], interruption["reason"]))
     log("\n" + SELECTION_CAVEAT)
 
 
@@ -1098,9 +1402,20 @@ def main(argv=None):
     }
     print(plan(chosen, args.timeout, args.arch, runner=runner or RUNNER))
     print("runner: {}\n".format(version_text))
+    started_with, read_from, limitation = disk_available()
+    print("disk available to the container daemon: {}  ({})".format(
+        gb(started_with), read_from))
+    if limitation:
+        print("  " + limitation)
     if args.dry_run:
         print("--dry-run: nothing was executed")
         return 0
+    refusal = require_disk(started_with)
+    if refusal:
+        return refusal + "\n\n" + reclaim_report()
+    if started_with is not None and started_with < DISK_FLOOR:
+        print("  {} is set, so the {} floor was not enforced".format(
+            LOW_DISK_ENV, gb(DISK_FLOOR)))
     if len(chosen) < args.sample:
         print("only {} of the {} requested meet the rule\n".format(
             len(chosen), args.sample))
@@ -1108,9 +1423,12 @@ def main(argv=None):
     os.makedirs(args.out, exist_ok=True)
     out_path = os.path.join(args.out, DIFFERENTIAL_NAME)
     refuse_overwrite(out_path, DIFFERENTIAL_NAME)
-    records = execute(chosen, timeout=args.timeout, arch=args.arch,
-                      runner=runner)
-    summarise(records)
+    records, interruption = execute(chosen, timeout=args.timeout,
+                                    arch=args.arch, runner=runner)
+    ended_with, read_from_end, limitation_end = disk_available()
+    summarise(records, interruption=interruption)
+    print("\ndisk available to the container daemon: {} at the start, {} now"
+          .format(gb(started_with), gb(ended_with)))
     write(out_path, records, selection, {
         "runner": "{} ({})".format(version_text, runner),
         "runner_version": ".".join(str(n) for n in version),
@@ -1119,16 +1437,34 @@ def main(argv=None):
         "secrets_supplied": "none, by construction: no secret file is read, "
                             "no secret is passed, credential-shaped variables "
                             "are removed from the runner's environment",
+        "disk": {
+            "$comment": DISK_COMMENT,
+            "floor": gb(DISK_FLOOR),
+            "floor_bytes": DISK_FLOOR,
+            "floor_enforced": not low_disk_allowed(),
+            "available_at_start": gb(started_with),
+            "available_at_start_bytes": started_with,
+            "available_at_end": gb(ended_with),
+            "available_at_end_bytes": ended_with,
+            "read_from": read_from,
+            "read_from_at_end": read_from_end,
+            "limitation": limitation,
+            "limitation_at_end": limitation_end,
+            "stopped_early": interruption,
+        },
     })
     print("\nwrote " + out_path)
     return 0
 
 
-__all__ = ["ANSWERS", "OUTCOMES", "PROVES_NOTHING", "RUNNER_MIN",
+__all__ = ["ANSWERS", "DISK_FLOOR", "DOCKER_READ_ONLY", "OUTCOMES",
+           "PROVES_NOTHING", "RUNNER_MIN",
            "SELECTION_RULE", "aggregate", "assert_no_secret",
-           "build_parser", "classify_outcome", "execute", "find_runner",
+           "build_parser", "classify_outcome", "disk_available", "docker_read",
+           "execute", "find_runner", "gb", "low_disk_allowed",
            "main", "plan",
-           "read_steps", "require_sample", "runner_argv", "runner_version",
+           "read_steps", "reclaim_report", "reclaimable", "require_disk",
+           "require_sample", "runner_argv", "runner_version",
            "scrubbed_env", "select", "summarise", "write"]
 
 if __name__ == "__main__":
