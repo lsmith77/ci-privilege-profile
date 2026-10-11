@@ -1,0 +1,17 @@
+name: ci
+on: pull_request
+
+# A COMPOUND COMMAND. One shell line authenticates to a registry and then runs
+# the tests, so the step that invokes the test suite is the step that consumes
+# the credential and there is no reading on which the suite runs without it.
+# The unit a rule asks of is the whole step, which is what catches this: a
+# reading that cut shell lines apart would have to decide which half of a `&&`
+# the credential belongs to, and the answer is both.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          docker login -u $REGISTRY_USER -p $REGISTRY_PASSWORD
+          registry.example.org && npm test

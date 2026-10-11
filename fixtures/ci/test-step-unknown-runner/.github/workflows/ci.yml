@@ -1,0 +1,21 @@
+name: ci
+on:
+  pull_request:
+
+# RECOGNITION, NOT INFERENCE. The tests here run behind the project's own shell
+# script, which no list of command forms can cover, so the determination
+# answers "no test invocation could be identified" rather than reading a step
+# that holds no credential as a test suite that runs unprivileged. That is the
+# error direction: a spurious match would be the flattering answer, since the
+# step is clean.
+#
+# It is also the commonest residual shape in any real corpus, which is why it
+# is a case of its own rather than a footnote: the determination is not
+# measuring whether test suites need credentials, it is measuring how often a
+# pipeline file says enough to tell.
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./ci/run-acceptance.sh --suite smoke && ./ci/collect.sh

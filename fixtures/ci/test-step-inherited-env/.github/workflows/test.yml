@@ -1,0 +1,24 @@
+name: test
+on:
+  pull_request:
+
+# INHERITED ENVIRONMENT, which is the trap the determination exists to avoid.
+# The test step names no secret at all. The job-level `env:` above it maps one
+# into every step in the job, the test step included, so the suite cannot run
+# without it and a reading that looked only at the step's own text would call
+# this a test suite that runs unprivileged. Ignoring inheritance would make the
+# figure wrong in the flattering direction and in bulk, because a job-level
+# `env:` is the ordinary way to hand a whole job a credential.
+#
+# Note what the credentials axis says about the same file: the privilege sits
+# in the frame, where no step can be held responsible for it, so that axis
+# reads unattributable. The two readings are asked of different units, which is
+# why this determination needed its own segmentation.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pytest -q

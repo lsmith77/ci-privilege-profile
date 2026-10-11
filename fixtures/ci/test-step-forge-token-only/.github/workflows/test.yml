@@ -1,0 +1,21 @@
+name: test
+"on":
+  pull_request:
+    types: [opened, synchronize]
+
+# The forge-token carve-out, reached through the inheritance rule. A credential
+# is mapped into the job's environment and the test step inherits it, exactly
+# as in `test-step-inherited-env`, but this one is the forge's own auto-minted
+# token: whatever runs the job supplies it, so a contributor supplies nothing
+# and the suite runs unprivileged. The same judgement `uses-forge-token`
+# carries on the ladder, applied here rather than restated, and recorded as its
+# own `test-step-forge-token` evidence so the size of the judgement can be
+# re-sliced from the signals.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: go test ./...

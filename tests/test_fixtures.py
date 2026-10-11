@@ -19,7 +19,8 @@ from ciprofile.fixtures import (FIXTURE_DIR, check,              # noqa: E402
                                 fixture_cases, load_expected)
 from ciprofile.structure import (actions_commands, actions_steps,  # noqa: E402
                                  actions_triggers, gitlab_commands,
-                                 gitlab_jobs, kind_of)
+                                 gitlab_jobs, kind_of, privilege_units,
+                                 units_with_scope)
 
 
 def every_fixture_classifies_as_the_table_says():
@@ -122,6 +123,17 @@ def the_unit_readings_do_not_crash_on_either_grammar():
                 runs += len(actions_commands(text))
     assert steps > 50 and runs > 20, (steps, runs)
     assert jobs >= 3 and cmds >= 3, (jobs, cmds)
+    # The scope-aware reading cuts the same units, and places every one of them
+    # across the corpus. A None scope is the refusal the test-step
+    # determination takes the privileged way, so a corpus-wide None would be a
+    # segmentation that never works rather than a rule that is careful.
+    for case, files in cases.items():
+        for path, text in files.items():
+            kind = kind_of(path)
+            scoped = units_with_scope(kind, text)
+            units, _frame = privilege_units(kind, text)
+            assert [u for u, _s in scoped] == units, (case, path)
+            assert all(s is not None for _u, s in scoped), (case, path)
 
 
 sys.exit(run([

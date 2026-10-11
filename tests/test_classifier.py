@@ -348,7 +348,8 @@ def the_most_privileged_flag_becomes_the_primary_class():
              "      - uses: actions/github-script@v7\n")
     assert both["primary"] == ACTS_ON_FORGE, both
     assert set(both["flags"]) == {ACTS_ON_FORGE, WRITES_OUTWARD,
-                                  rules.CREDENTIALS_UNCLEAR}, both
+                                  rules.CREDENTIALS_UNCLEAR,
+                                  rules.TEST_STEP_UNIDENTIFIED}, both
     # The forge's own token is not a read credential: nobody supplies it.
     tok = f("jobs:\n  a:\n    runs-on: ubuntu-latest\n    env:\n"
             "      T: ${{ secrets.GITHUB_TOKEN }}\n")

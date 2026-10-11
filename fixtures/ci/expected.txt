@@ -23,20 +23,28 @@
 # the parser handles (flow sequence, scalar, block mapping, block sequence,
 # a nested `types:`, the quoted `"on":`), so the corpus of fixtures exercises
 # the trigger reading as a side effect of pinning the classes.
+#
+# Every row holding a pipeline file carries a `test-step-*` value, because that
+# determination has one of three answers wherever there is a step to ask about
+# and "no test invocation could be identified" is one of them. A row with no
+# pipeline file in the scope carries none: there is nothing to ask.
 
-self-contained              self-contained          self-contained,assumes-toolchain
-forgejo-location            self-contained          self-contained
-read-credential             read-credential         read-credential,credentials-test-time
-writes-outward              writes-outward          writes-outward,credentials-unclear
-acts-on-forge               acts-on-forge           acts-on-forge,uses-forge-token,credentials-reporting-only
-special-env                 special-env             special-env
-matrix-os                   special-env             special-env
-gitlab                      writes-outward          writes-outward,assumes-toolchain,credentials-unclear
+self-contained              self-contained          self-contained,assumes-toolchain,test-step-unprivileged
+forgejo-location            self-contained          self-contained,test-step-unprivileged
+read-credential             read-credential         read-credential,credentials-test-time,test-step-privileged
+writes-outward              writes-outward          writes-outward,credentials-unclear,test-step-unidentified
+acts-on-forge               acts-on-forge           acts-on-forge,uses-forge-token,credentials-reporting-only,test-step-unidentified
+special-env                 special-env             special-env,test-step-unidentified
+matrix-os                   special-env             special-env,test-step-unprivileged
+gitlab                      writes-outward          writes-outward,assumes-toolchain,credentials-unclear,test-step-unidentified
 no-pipeline                 no-pipeline             no-pipeline
 
 # Every run step is one `./pretest.sh`, so a contributor can reproduce it
-# locally. The shape flag rides alongside the class, never replaces it.
-thin-wrapper                self-contained          self-contained,thin-wrapper
+# locally. The shape flag rides alongside the class, never replaces it. And an
+# unrecognised script is not a test invocation, which is why the shape flag and
+# `test-step-unidentified` so often appear together: the thin wrapper is the
+# commonest reason the determination cannot read a test step at all.
+thin-wrapper                self-contained          self-contained,thin-wrapper,test-step-unidentified
 
 # Why the scope exists. A pull-request check that only lints, beside a release
 # workflow that publishes: read as one set of files the repository is
@@ -44,30 +52,30 @@ thin-wrapper                self-contained          self-contained,thin-wrapper
 # so neither reading of the contributor's own pipeline survives. Scoped, both
 # do. Nearly every mature project carries a release or deploy workflow, so the
 # shape is the common case rather than an edge.
-pull-request-scope          self-contained          self-contained,thin-wrapper                             writes-outward          writes-outward,credentials-unclear
+pull-request-scope          self-contained          self-contained,thin-wrapper,test-step-unidentified       writes-outward          writes-outward,credentials-unclear,test-step-unidentified
 
 # A repository with a pipeline and nothing a pull request triggers. Its own
 # state, counted apart from no-pipeline: one project does no CI, the other does
 # CI a contributor never sets off, and folding them together inflates
 # no-pipeline, which is among the figures most likely to be quoted.
-no-pull-request-trigger     no-pull-request-trigger no-pull-request-trigger                                 writes-outward          writes-outward,credentials-unclear
+no-pull-request-trigger     no-pull-request-trigger no-pull-request-trigger                                 writes-outward          writes-outward,credentials-unclear,test-step-unidentified
 
 # The case the separate tally exists for: a `pull_request_target` workflow
 # whose primary class is `self-contained`. Nothing about the privileged trigger shows
 # up in the distribution table, which is why it is counted on its own.
-pull-request-target         self-contained          self-contained,thin-wrapper,uses-pull-request-target
+pull-request-target         self-contained          self-contained,thin-wrapper,uses-pull-request-target,test-step-unidentified
 
 # And its over-claim. The same string in a `run:` step is not a trigger, so
 # the flag must stay down: the trigger figure is one of the few exact enough
 # to quote outside, and it is held to what the `on:` declaration says.
-pull-request-target-in-run  self-contained          self-contained,thin-wrapper
+pull-request-target-in-run  self-contained          self-contained,thin-wrapper,test-step-unidentified
 
 # What `self-contained` does not mean. No secret, no outward write, no runner
 # label. And node still has to be on the runner before `npm test` starts. The
 # environment dependency is reported beside the class and ranks nothing,
 # because what a shared runner image must carry is a separate question from
 # what privilege a host must grant.
-assumes-toolchain           self-contained          self-contained,assumes-toolchain
+assumes-toolchain           self-contained          self-contained,assumes-toolchain,test-step-unprivileged
 
 # The two halves of the forge-token split, which is the judgement that most
 # moves the headline distribution. `forge-token-no-write` is the whole of the
@@ -76,16 +84,16 @@ assumes-toolchain           self-contained          self-contained,assumes-toolc
 # carve-out decides nothing there, and it is written in GitLab's grammar,
 # where `CI_JOB_TOKEN` is recognised by variable name because there is no
 # `secrets.` namespace to name it in.
-forge-token-no-write        self-contained          self-contained,uses-forge-token
-forge-token-with-write      acts-on-forge           acts-on-forge,uses-forge-token,credentials-unclear
+forge-token-no-write        self-contained          self-contained,uses-forge-token,test-step-unprivileged
+forge-token-with-write      acts-on-forge           acts-on-forge,uses-forge-token,credentials-unclear,test-step-unidentified
 
 # The two halves of the name scan, which is all the evidence there is for a
 # credential referenced as a plain shell variable. `cache-key` is the case
 # NOT_CREDENTIAL exists for: a `_KEY` name that is ordinary data, and nothing
 # a contributor has to be given. `credential-by-name` is the same spelling
 # where the name does mean a credential, and it must keep saying so.
-cache-key                   self-contained          self-contained
-credential-by-name          read-credential         read-credential,credentials-unclear
+cache-key                   self-contained          self-contained,test-step-unprivileged
+credential-by-name          read-credential         read-credential,credentials-unclear,test-step-unprivileged
 
 # The `push:` input, which is the whole of the evidence that
 # docker/build-push-action publishes anything. `build-push-conditional` is the
@@ -97,8 +105,8 @@ credential-by-name          read-credential         read-credential,credentials-
 # action treats the same way. The distinction decides whether a repository
 # lands in self-contained or writes-outward, and in a corpus that is almost entirely
 # GitHub Actions it decides it in bulk.
-build-push-conditional      writes-outward          writes-outward,uses-forge-token,credentials-unclear
-build-push-build-only       self-contained          self-contained
+build-push-conditional      writes-outward          writes-outward,uses-forge-token,credentials-unclear,test-step-unidentified
+build-push-build-only       self-contained          self-contained,test-step-unidentified
 
 # What actions/github-script is used for, rather than what it can do. This
 # body only logs and sets variables for later steps, so no forge call happens
@@ -106,7 +114,7 @@ build-push-build-only       self-contained          self-contained
 # with a `github.rest` call in its body. On the action's presence alone this
 # would take the top class on the strength of a client the script never
 # touches.
-github-script-core-only     self-contained          self-contained
+github-script-core-only     self-contained          self-contained,test-step-unidentified
 
 # A write whose only evidence is the permission. `packages: write` is a
 # registry publish; `id-token: write` is the keyless path to a registry, a
@@ -115,8 +123,8 @@ github-script-core-only     self-contained          self-contained
 # credential a secret reference or a credential-shaped name would expose. Both
 # write outward rather than against the forge API, so both rank writes-outward
 # and neither is acts-on-forge.
-packages-permission         writes-outward          writes-outward,credentials-unclear
-id-token-permission         writes-outward          writes-outward,credentials-unclear
+packages-permission         writes-outward          writes-outward,credentials-unclear,test-step-unidentified
+id-token-permission         writes-outward          writes-outward,credentials-unclear,test-step-unidentified
 
 # The reporting-versus-test-time axis, which says what the privilege is FOR and
 # never how large it is: every row above carries its value too, and none of
@@ -136,7 +144,11 @@ id-token-permission         writes-outward          writes-outward,credentials-u
 # `credentials-test-time-maven` is the inverse and decisive: the credential is
 # what resolves the dependencies, so the pipeline does not run without it and
 # no reporting reading is available. `read-credential` above is the npm
-# spelling of it.
+# spelling of it. Both carry `test-step-privileged` for the same reason, and it
+# is the one place the determination defers to this axis: the credential is
+# what the `mvn verify` needs, it just arrives in a settings file an earlier
+# step wrote rather than in the step's environment, and the environment reading
+# cannot see that.
 #
 # `reporting-plus-unknown` is the asymmetry, and the most important row here.
 # A recognised coverage upload sits beside one privileged step no rule
@@ -144,12 +156,15 @@ id-token-permission         writes-outward          writes-outward,credentials-u
 # unrecognised step is enough, because reporting-only is a positive claim about
 # every privileged step in the scope. Let that row read reporting-only and the
 # flattering answer wins by default for every tool the tables have never heard
-# of, which is the failure this whole module is written against.
-reporting-coverage-upload   read-credential         read-credential,credentials-reporting-only
-reporting-always            read-credential         read-credential,credentials-reporting-only
-reporting-pr-comment        acts-on-forge           acts-on-forge,thin-wrapper,credentials-reporting-only
-credentials-test-time-maven read-credential         read-credential,assumes-toolchain,credentials-test-time
-reporting-plus-unknown      writes-outward          writes-outward,credentials-unclear
+# of, which is the failure this whole module is written against. Its
+# `test-step-unprivileged` is the narrower determination answering where that
+# axis cannot: the `aws s3 sync` holds the scope unclear and the tests still
+# run without a credential.
+reporting-coverage-upload   read-credential         read-credential,credentials-reporting-only,test-step-unprivileged
+reporting-always            read-credential         read-credential,credentials-reporting-only,test-step-unidentified
+reporting-pr-comment        acts-on-forge           acts-on-forge,thin-wrapper,credentials-reporting-only,test-step-unidentified
+credentials-test-time-maven read-credential         read-credential,assumes-toolchain,credentials-test-time,test-step-privileged
+reporting-plus-unknown      writes-outward          writes-outward,credentials-unclear,test-step-unprivileged
 
 # The neutral list, and the one edge it must not swallow. `neutral-plus-reporting`
 # wraps a coverage upload in build plumbing (a checkout, a toolchain setup, a
@@ -162,8 +177,8 @@ reporting-plus-unknown      writes-outward          writes-outward,credentials-u
 # checkout handed a personal access token is judged on that token like any
 # other step, so membership of the list can never swallow an explicit
 # credential, and the scope is unclear with the coverage upload beside it.
-neutral-plus-reporting      read-credential         read-credential,assumes-toolchain,credentials-reporting-only
-neutral-handed-secret       read-credential         read-credential,credentials-unclear
+neutral-plus-reporting      read-credential         read-credential,assumes-toolchain,credentials-reporting-only,test-step-unprivileged
+neutral-handed-secret       read-credential         read-credential,credentials-unclear,test-step-unprivileged
 
 # A grant nothing consumes is not a privilege a contributor needs. The
 # `pull-requests: write` here is declared for a step that is not in the file,
@@ -172,21 +187,69 @@ neutral-handed-secret       read-credential         read-credential,credentials-
 # alone held the repository out of the figure. No credentials-* flag follows,
 # because the scope needs no privilege at all; the grant still ranks the
 # class, which is the ladder's business and not this axis's.
-unused-permissions-grant    acts-on-forge           acts-on-forge,assumes-toolchain
+unused-permissions-grant    acts-on-forge           acts-on-forge,assumes-toolchain,test-step-unprivileged
 
 # Cloud authentication with the tests after it: not a record of the run, and
-# not droppable, so the axis answers test-time instead of shrugging.
-cloud-credential            writes-outward          writes-outward,assumes-toolchain,credentials-test-time
+# not droppable, so the axis answers test-time instead of shrugging. The test
+# step is privileged on the same reading: the credential the authentication
+# leaves behind is what the integration tests reach the account with.
+cloud-credential            writes-outward          writes-outward,assumes-toolchain,credentials-test-time,test-step-privileged
 
 # Minting a forge token from a GitHub App is forge-side privilege, so the class
 # is acts-on-forge, and the App's id and private key are secrets a contributor
 # would have to be given, which is why the carve-out for the forge's own
 # auto-minted token does not reach it. The axis stays unclear on purpose: the
-# mint says what the token can do, never what it is for.
-forge-app-token             acts-on-forge           acts-on-forge,credentials-unclear
+# mint says what the token can do, never what it is for. The determination can
+# still answer: the mint and the comment are their own steps, and the `pytest`
+# between them is reached by neither.
+forge-app-token             acts-on-forge           acts-on-forge,credentials-unclear,test-step-unprivileged
 
 # A `steps:` whose items sit at its own column. Legal YAML and common here, and
 # read as an empty block it put the whole job's privilege in the frame, where
 # no step could be held responsible for it. Attributed, the one credential
-# feeds a code-quality upload and the scope is reporting-only.
-steps-at-key-column         read-credential         read-credential,assumes-toolchain,credentials-reporting-only
+# feeds a code-quality upload and the scope is reporting-only. The test step is
+# privileged, and not in contradiction: `mvn -B verify sonar:sonar` is one step
+# that runs the tests and uploads the analysis, so the step consuming the
+# credential is the step invoking the suite.
+steps-at-key-column         read-credential         read-credential,assumes-toolchain,credentials-reporting-only,test-step-privileged
+
+# The test-step determination, which asks a narrower question than the
+# credentials axis: not whether every privileged step in the scope is
+# droppable, but whether the step that invokes the test suite consumes a
+# credential. Every row above carries its value too, and none of them changed
+# class to get one.
+#
+# `test-step-inherited-env` is the trap, and the row that matters most here. The
+# test step names no secret; a job-level `env:` maps one into every step in the
+# job, so the suite cannot run without it. Reading the step's own text alone
+# would call this unprivileged, which is the flattering answer and a wrong one,
+# and a job-level `env:` is the ordinary way to hand a job a credential rather
+# than an edge. Note what the credentials axis says about the same file:
+# `unattributed-privilege`, because the privilege is in the frame and no step
+# can be held responsible for it. The two are asked of different units.
+#
+# `test-step-clean-publish-later` is the case the determination exists for: the
+# only credential is the publish step's, so the tests run without it, and the
+# credentials axis cannot reach that reading because the publish is a
+# privileged step it recognises as neither reporting nor test-time.
+#
+# `test-step-login-and-test` is the compound command. One shell line
+# authenticates and then runs the tests, so the step consuming the credential
+# is the step invoking the suite. `test-step-clean-publish-later` carries the
+# converse in its `npm ci && npm test`: a test invocation is not privileged
+# merely for installing alongside.
+#
+# `test-step-forge-token-only` is the carve-out reached through the inheritance
+# rule. The same shape as `test-step-inherited-env`, with the forge's own
+# auto-minted token in the job `env:` instead, which nobody supplies and which
+# therefore leaves the suite unprivileged.
+#
+# `test-step-unknown-runner` is the error direction. The tests run behind the
+# project's own shell script, so no command form is recognised and the answer
+# is "not identifiable" rather than "unprivileged": a spurious match here would
+# be the flattering reading, since the step holds no credential.
+test-step-inherited-env       read-credential         read-credential,credentials-unclear,test-step-privileged
+test-step-clean-publish-later writes-outward          writes-outward,credentials-unclear,test-step-unprivileged
+test-step-login-and-test      read-credential         read-credential,credentials-unclear,test-step-privileged
+test-step-forge-token-only    self-contained          self-contained,uses-forge-token,test-step-unprivileged
+test-step-unknown-runner      self-contained          self-contained,test-step-unidentified

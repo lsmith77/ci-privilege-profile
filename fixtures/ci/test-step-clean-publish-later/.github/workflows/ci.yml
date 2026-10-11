@@ -1,0 +1,26 @@
+name: ci
+on:
+  pull_request:
+
+# The case the determination exists for. The only credential in the file is the
+# publish step's, two steps after the tests, and nothing maps it into the job,
+# so the test suite runs without it: a contributor can run these tests on their
+# own infrastructure whatever the publish needs. The credentials axis cannot
+# reach that reading, because the publish is a privileged step it recognises as
+# neither reporting nor test-time and one such step holds the whole scope
+# unclear.
+#
+# `npm ci && npm test` is also the converse of the compound-command rule: a
+# test invocation sharing a shell line with an install is not privileged for
+# installing. Only a privileged act in the same line makes it so.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm test
+      - name: publish
+        if: github.ref == 'refs/heads/main'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
