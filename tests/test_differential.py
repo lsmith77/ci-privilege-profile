@@ -9,7 +9,11 @@ The guards first, because this is the one module in the repository that
 executes third-party code, and a guard that stopped holding would not show up
 in any output.
 """
+import ast
+import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -333,6 +337,345 @@ def the_runner_runs_outside_the_clone():
     assert argv[argv.index("-C") + 1] == "/clone", argv
     assert "-W" in argv and argv[argv.index("-W") + 1].startswith("/clone/")
     assert "--container-architecture" in argv, argv
+
+
+# ---------------------------------------------------------------- the disk
+#
+# Entirely offline, like everything else here: no daemon is asked anything, no
+# container is started, and nothing on the machine's disk is created or removed
+# beyond a scratch directory and a sparse file standing in for a VM image.
+
+
+def about(got, want, slack=10 ** 9):
+    """Two readings of the same disk, taken a moment apart.
+
+    Free space on a working machine moves between two calls, so a check that
+    demanded equality would fail for reasons that have nothing to do with the
+    property. A gigabyte of slack is far tighter than the distinctions these
+    checks turn on, which are whole disks apart.
+    """
+    return got is not None and abs(got - want) < slack
+
+
+def the_disk_preflight_refuses_below_the_floor():
+    """A long run is not started on a disk that cannot hold it.
+
+    The appetite being guarded against is not this harness's own: the tooling
+    is 3.2 GB of runner image and toolcache, measured. It is the machine the
+    run lands on, which owes this tool nothing and may be carrying tens of
+    gigabytes of somebody else's images, volumes and build cache. The failure
+    the floor prevents is a multi-hour run dying at repository six with no
+    results, or a full disk breaking work that has nothing to do with it.
+
+    The message has to carry the floor, what was found and the difference,
+    because "not enough space" sends the operator off to measure what this
+    function has already measured.
+    """
+    found = D.DISK_FLOOR - 3 * 1000 ** 3
+    refusal = D.require_disk(found, allow_low=False)
+    assert refusal, "a run was allowed to start on a disk below the floor"
+    assert D.gb(found) in refusal, refusal
+    assert D.gb(D.DISK_FLOOR) in refusal, refusal
+    assert D.gb(D.DISK_FLOOR - found) in refusal, refusal   # how much to free
+    assert D.LOW_DISK_ENV in refusal, refusal
+    assert D.require_disk(D.DISK_FLOOR, allow_low=False) is None
+    assert D.require_disk(D.DISK_FLOOR + 1, allow_low=False) is None
+    # A floor at or below the footprint of the tooling would refuse nothing
+    # that mattered: it has to leave room for a repository as well.
+    assert D.DISK_FLOOR > 4 * 1000 ** 3, D.DISK_FLOOR
+    # And an unreadable figure is not a refusal. There is nothing to refuse
+    # on, and disk_available() has already said so in its limitation.
+    assert D.require_disk(None, allow_low=False) is None
+
+
+def the_low_disk_escape_hatch_overrides_the_floor():
+    """The floor stops an accident, not a decision.
+
+    The same shape as the sample ceiling's hatch: overridable, in writing, in
+    the environment, and named in the refusal so the operator does not have to
+    find it in a document. Passed in here rather than read from the
+    environment, so whatever this machine happens to hold cannot decide the
+    answer.
+    """
+    tight = D.DISK_FLOOR // 100
+    assert D.require_disk(tight, allow_low=False), "the floor did not hold"
+    assert D.require_disk(tight, allow_low=True) is None
+    assert D.require_disk(0, allow_low=True) is None
+    for said, allowed in (("", False), ("0", False), ("1", True),
+                          ("yes", True)):
+        assert D.low_disk_allowed({D.LOW_DISK_ENV: said}) is allowed, said
+    assert D.low_disk_allowed({}) is False
+
+
+def a_shortfall_between_repositories_stops_the_run_with_its_results():
+    """A run that stops early with its results intact beats one that dies.
+
+    The preflight measured a machine that was not then running containers, so
+    the figure in front of the NEXT repository is a different figure. When it
+    is below the floor the loop breaks and the records so far are returned and
+    written: four answered repositories is a result, and a run killed by a
+    full disk at repository five is not.
+
+    Driven through the real execute() with the clone and the runner injected,
+    for the same reason find_runner takes `ask`: a check that had to fill a
+    disk and start a container to exercise this is a check nobody runs.
+    """
+    chosen = [{"repo": name, "owner": name.split("/")[0],
+               "workflows": [".github/workflows/ci.yml"],
+               "unresolved": ["credentials-unclear"],
+               "test_invocation_recognised": True}
+              for name in ("a/one", "b/two", "c/three")]
+    ran = []
+
+    def clone_fn(repo, into, log=print):
+        ran.append(repo)
+        return True
+
+    def run_fn(clone_dir, workflow, budget, arch=None, runner=None,
+               log=print):
+        return D.RAN_UNPRIVILEGED, "every step ran", "", 1.0, ""
+
+    records, interruption = D.execute(
+        chosen, pace=0, log=lambda _m: None, clone_fn=clone_fn, run_fn=run_fn,
+        space=lambda: D.DISK_FLOOR // 4, allow_low=False)
+    assert [r["repo"] for r in records] == ["a/one"], records
+    assert ran == ["a/one"], ran                 # nothing further was cloned
+    assert records[0]["outcome"] == D.RAN_UNPRIVILEGED, records[0]
+    assert interruption, "the run carried on below the floor"
+    assert interruption["stopped_before"] == "b/two", interruption
+    assert interruption["completed"] == 1, interruption
+    assert interruption["selected"] == 3, interruption
+    assert D.LOW_DISK_ENV in interruption["reason"], interruption
+    # The partial results are written, with the stop on the record, so a
+    # reader does not meet a one-repository distribution and take it for the
+    # sample that was asked for.
+    scratch = tempfile.mkdtemp()
+    path = D.write(os.path.join(scratch, D.DIFFERENTIAL_NAME), records, {},
+                   {"disk": {"stopped_early": interruption}})
+    out = json.loads(open(path).read())
+    assert out["outcomes"][D.RAN_UNPRIVILEGED] == 1, out["outcomes"]
+    assert len(out["repositories"]) == 1, out["repositories"]
+    assert out["disk"]["stopped_early"]["stopped_before"] == "b/two", out
+    said = []
+    D.summarise(records, log=said.append, interruption=interruption)
+    assert any("PARTIAL" in m for m in said), said
+    # And a run with room runs to the end, reporting no interruption at all.
+    records, interruption = D.execute(
+        chosen, pace=0, log=lambda _m: None, clone_fn=clone_fn, run_fn=run_fn,
+        space=lambda: D.DISK_FLOOR * 10, allow_low=False)
+    assert [r["repo"] for r in records] == ["a/one", "b/two", "c/three"]
+    assert interruption is None, interruption
+    said = []
+    D.summarise(records, log=said.append, interruption=None)
+    assert not any("PARTIAL" in m for m in said), said
+
+
+def the_daemons_own_figure_is_preferred_to_the_hosts():
+    """The host filesystem answers a different question, and answers it kindly.
+
+    What fills during a run is the disk the daemon writes images, volumes and
+    container layers to. On macOS that disk is inside a VM, so a host with
+    room to spare says nothing about whether the next image pull fits, and a
+    preflight that read the host would wave through exactly the run it exists
+    to stop.
+
+    Both daemon readings are exercised. Proving the preference by comparing
+    two numbers would be vacuous, because a machine's docker root and its
+    scratch space are usually the same filesystem; so the host read is made to
+    FAIL instead, and a figure coming back at all can only have come from the
+    daemon's own directory.
+    """
+    root = tempfile.mkdtemp()
+    available, how, limitation = D.disk_available(
+        scratch=os.path.join(root, "nonexistent"),
+        run=lambda argv: (root + "\n", ""))
+    assert available and available > 0, available
+    assert root in how and "storage directory" in how, how
+    assert limitation == "", limitation
+    # The VM reading, for the host where the daemon's root is inside a VM and
+    # so is not on this filesystem at all. A sparse file stands in for the
+    # image: its unwritten remainder is the headroom.
+    image = os.path.join(root, "Docker.raw")
+    with open(image, "wb") as fh:
+        fh.truncate(4096)
+    available, how, limitation = D.disk_available(
+        scratch=root, run=lambda argv: ("/var/lib/docker-absent\n", ""),
+        images=(image,))
+    assert available == 4096, available
+    assert image in how, how
+    assert "LOWER BOUND" in limitation, limitation
+    # And the VM figure is capped by the host it grows into, or a disk image
+    # declared larger than the machine would read as room the machine has not
+    # got.
+    with open(image, "wb") as fh:
+        fh.truncate(10 ** 15)
+    available, _how, _limitation = D.disk_available(
+        scratch=root, run=lambda argv: ("/var/lib/docker-absent\n", ""),
+        images=(image,))
+    assert about(available, shutil.disk_usage(root).free), available
+
+
+def an_unreadable_daemon_figure_falls_back_and_records_the_limitation():
+    """A substitute figure is reported as a substitute, never passed off.
+
+    There is no vendor-neutral way to ask a daemon in a VM how much room it
+    has left, so the host figure is sometimes the only one there is. Reporting
+    it silently would put a number in the output that reads as the daemon's
+    and can be generous by any amount, which is the same error as reading a
+    log line nothing matched as evidence.
+    """
+    scratch = tempfile.mkdtemp()
+    host = shutil.disk_usage(scratch).free
+    available, how, limitation = D.disk_available(
+        scratch=scratch, run=lambda argv: (None, "`docker` did not run"),
+        images=())
+    assert about(available, host), (available, host)
+    assert scratch in how and "host filesystem" in how, how
+    assert "COULD NOT BE READ" in limitation, limitation
+    assert "did not run" in limitation, limitation
+    # The daemon answered, but with a root directory that is somewhere else.
+    # Same substitution, and it still says which.
+    available, how, limitation = D.disk_available(
+        scratch=scratch, run=lambda argv: ("/var/lib/docker-absent\n", ""),
+        images=())
+    assert about(available, host), (available, host)
+    assert "/var/lib/docker-absent" in limitation, limitation
+    assert "not on this filesystem" in limitation, limitation
+    # And when neither can be read there is no figure to refuse on, which is
+    # said rather than guessed at in either direction.
+    available, _how, limitation = D.disk_available(
+        scratch=os.path.join(scratch, "nonexistent"),
+        run=lambda argv: (None, "no daemon"), images=())
+    assert available is None, available
+    assert "NEITHER THE DAEMON NOR THE HOST" in limitation, limitation
+    assert D.require_disk(available, allow_low=False) is None
+    assert D.gb(None) == "unknown"
+
+
+# The commands a disk check could be tempted into. Matched on word boundaries
+# rather than as bare substrings, because `rmi` sits inside `determination` and
+# a check that fired on that would be deleted rather than fixed. The advice
+# constant is allowed to name these, because it is printed for the operator to
+# act on; nothing else in the module may.
+PRUNING = (r"\bprune", r"\brmi\b", r"docker\s+rm\b", r"image\s+rm\b",
+           r"volume\s+rm\b", r"container\s+rm\b", r"network\s+rm\b",
+           r"--volumes\b")
+EXECUTING = ("subprocess.run", "subprocess.popen", "subprocess.call",
+             "subprocess.check_output", "os.system", "os.popen", "os.execv",
+             "os.spawnv")
+
+
+def dotted(node):
+    """`subprocess.run` out of a Call's func, spelled as it is written."""
+    bits = []
+    while isinstance(node, ast.Attribute):
+        bits.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        bits.append(node.id)
+    return ".".join(reversed(bits))
+
+
+def nothing_here_prunes_anything():
+    """The operator's images, volumes and build cache are not this tool's.
+
+    A measurement instrument that freed somebody's disk to make room for its
+    own run would have destroyed data nobody asked it to touch, and a full
+    disk is much the cheaper of the two failures. So the help offered is a
+    figure and a command, and the decision stays with whoever owns the
+    machine.
+
+    Asserted from the source, the way the adapters' read-only property is: one
+    `docker volume prune` is all it would take, and it would not show up in
+    any output. Three ways, because each would miss the others. The allowlist
+    is the mechanism; the source scan catches a command built around it; and
+    the recorded argv proves what the preflight actually issues.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "ciprofile", "differential.py")).read()
+    tree = ast.parse(src)
+
+    # Every string the module holds, except the advice constant's own, is
+    # checked for a destructive command. The advice is carved out by identity
+    # rather than by rewriting the text, so a second constant that started
+    # naming one would not slip through with it.
+    advice = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "RECLAIM_ADVICE"
+                for t in node.targets):
+            advice |= {id(n) for n in ast.walk(node)}
+    assert advice, "RECLAIM_ADVICE is no longer a module-level assignment"
+    # Docstrings are prose and cannot run, and this module explains at length
+    # what it will not do, so it names the commands it refuses to issue. What
+    # is scanned is every string that is not one: the place a command would
+    # have to be written to reach a daemon.
+    spared = set(advice)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) \
+                    and isinstance(first.value, ast.Constant) \
+                    and isinstance(first.value.value, str):
+                spared.add(id(first.value))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and id(node) not in spared:
+            said = node.value.lower()
+            for verb in PRUNING:
+                assert not re.search(verb, said), (verb, node.value[:120])
+
+    # And the advice is advice: it is never handed to anything that runs.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and dotted(node.func).lower() in EXECUTING:
+            for inner in ast.walk(node):
+                assert not (isinstance(inner, ast.Name)
+                            and inner.id == "RECLAIM_ADVICE"), \
+                    dotted(node.func)
+
+    # The allowlist, which is where "it only ever reads" is enforced rather
+    # than hoped for.
+    assert D.DOCKER_READ_ONLY, "the allowlist is empty"
+    for words in D.DOCKER_READ_ONLY.values():
+        assert words[0] in ("info", "system"), words
+        for verb in ("prune", "rm", "rmi", "create", "build", "load",
+                     "import", "kill", "stop"):
+            assert verb not in words, (words, verb)
+    assert D.DOCKER_READ_ONLY["usage"][:2] == ("system", "df"), \
+        D.DOCKER_READ_ONLY["usage"]
+    # A command absent from it is refused before anything is spawned, which is
+    # why asking for one costs no daemon call here.
+    for wanted in ("prune", "image prune", "volume rm", ""):
+        text, reason = D.docker_read(wanted)
+        assert text == "", (wanted, text)
+        assert "not a read-only docker command" in reason, (wanted, reason)
+
+    # Every argv the whole preflight issues, recorded. The source scan says
+    # the words are absent; this says what is actually run.
+    seen = []
+
+    def run(argv):
+        seen.append(list(argv))
+        return "", "no daemon on this machine"
+
+    D.disk_available(run=run, images=())
+    D.reclaim_report(run=run)
+    assert seen, "the preflight asked the daemon nothing at all"
+    allowed = {tuple(v) for v in D.DOCKER_READ_ONLY.values()}
+    for argv in seen:
+        assert argv[0] == D.DOCKER, argv
+        assert tuple(argv[1:]) in allowed, argv
+    # The report quotes the daemon's figures and names the commands, and that
+    # is the whole of the help it offers.
+    said = D.reclaim_report(run=lambda argv: (
+        '{"Type":"Images","Size":"60.35GB","Reclaimable":"37.77GB (62%)"}\n'
+        '{"Type":"Build Cache","Size":"47.33GB","Reclaimable":"20.8GB"}\n',
+        ""))
+    assert "60.35GB" in said and "37.77GB" in said, said
+    assert "Build Cache" in said, said
+    assert "yours to decide" in said, said
+    assert D.reclaim_report(run=lambda argv: ("", "nothing")) \
+        == D.RECLAIM_ADVICE
 
 
 # ------------------------------------------------- what a failure may be read as
@@ -794,6 +1137,18 @@ if __name__ == "__main__":
          stopping_never_signals_the_group_it_is_running_in),
         ("the runner runs outside the clone, so no .actrc is read from it",
          the_runner_runs_outside_the_clone),
+        ("the disk preflight refuses below the floor",
+         the_disk_preflight_refuses_below_the_floor),
+        ("the low-disk escape hatch overrides the floor",
+         the_low_disk_escape_hatch_overrides_the_floor),
+        ("a shortfall between repositories stops the run with its results",
+         a_shortfall_between_repositories_stops_the_run_with_its_results),
+        ("the daemon's own figure is preferred to the host's",
+         the_daemons_own_figure_is_preferred_to_the_hosts),
+        ("an unreadable daemon figure falls back and records the limitation",
+         an_unreadable_daemon_figure_falls_back_and_records_the_limitation),
+        ("nothing here prunes anything, asserted from the source",
+         nothing_here_prunes_anything),
         ("a clean run is the positive case and consults no pattern",
          a_clean_run_is_the_positive_case),
         ("the real log format is what is parsed, duration suffix included",
