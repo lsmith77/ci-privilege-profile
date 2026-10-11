@@ -29,8 +29,8 @@ echo "  ok    $(ls ciprofile/*.py ciprofile/sources/*.py tests/*.py | wc -l | tr
 
 echo "--- every module imports with no credentials and no network"
 for m in structure rules classify sweep cache report fixtures fork_observation \
-         sources sources.base sources.forgejo sources.gitlab sources.github \
-         sources.local; do
+         differential sources sources.base sources.forgejo sources.gitlab \
+         sources.github sources.local; do
   if env -u FORGE_URL -u FORGE_TOKEN -u GITLAB_URL -u GITHUB_TOKEN \
        -u GH_TOKEN "$PY" -c "import ciprofile.$m" >/dev/null 2>&1
   then echo "  ok    ciprofile.$m"
@@ -46,6 +46,21 @@ for args in "--source forgejo" "--source gitlab" "--source github" \
     0:*)         echo "  FAIL  $args exits zero when unconfigured"; fail=1 ;;
     *Traceback*) echo "  FAIL  $args refuses with a traceback"; fail=1 ;;
     *)           echo "  ok    $args refuses cleanly" ;;
+  esac
+done
+
+echo "--- differential execution refuses before it executes anything"
+# The one mode that runs third-party code. Both refusals are checked from the
+# command line as well as from the unit checks, because this is the spelling a
+# person actually types and it must not get as far as a container.
+for args in "" "--profile /nonexistent --cache /nonexistent" \
+            "--profile /nonexistent --cache /nonexistent --sample 9999"; do
+  out=$("$PY" -m ciprofile.differential $args 2>&1); rc=$?
+  case "$rc:$out" in
+    0:*)         echo "  FAIL  differential '$args' exits zero"; fail=1 ;;
+    *Traceback*) echo "  FAIL  differential '$args' refuses with a traceback"
+                 fail=1 ;;
+    *)           echo "  ok    differential '${args:-no arguments}' refuses" ;;
   esac
 done
 
