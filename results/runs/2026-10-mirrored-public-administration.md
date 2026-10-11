@@ -58,7 +58,7 @@ arrived in two segments, both of that date.
 
 The fork observation examined the newest 100 pull requests per repository by
 creation date. The cap bit on 92 repositories, 45 of which have at least one
-fork pull request and 27 of which are in the pull-request-triggered subset.
+fork pull request and 28 of which are in the pull-request-triggered subset.
 Fork counts for those are censored **downward**: an older fork pull request
 cannot be ruled out.
 
@@ -238,12 +238,13 @@ Coverage, which is why the figures below are over 1340 and not 1409:
 | unresolved: upstream absent | 6 |
 | **measured** | **1340** |
 
-The fork observation measures each repository under its **upstream's current
-name**, and that is the key every join below is made on. 10 of the 1340 have no
-entry under that name in the profile's `repos` map: 3 are among the 4 that could
-not be read on the mirror, and 7 are repositories GitHub has since renamed or
-transferred, so the upstream's name is no longer the mirror's name. 228 of the
-1340 are archived upstream.
+Every join below is made on the **profile's own repository key**, which is the
+key the fork records are written under, so each repository is matched against
+its own classification. 3 of the 1340 have no entry under that key in the
+profile's `repos` map, and all 3 are among the 4 that could not be read on the
+mirror. The fork records separately carry the upstream's current name, which
+differs from the key for 14 of the 1340, 7 of them beyond letter case. 228 of
+the 1340 are archived upstream.
 
 | | |
 | --- | ---: |
@@ -290,19 +291,17 @@ pull-request-triggered pipeline at all:
 
 | | repositories | fork PRs | no checks |
 | --- | ---: | ---: | ---: |
-| **with** a pull-request-triggered pipeline | 79 | 316 | 254 (80.4%) |
+| **with** a pull-request-triggered pipeline | 80 | 326 | 264 (81.0%) |
 | **without** one | 172 | 1,498 | 1,494 |
-| absent from the profile | 2 | 105 | 105 |
+| absent from the profile | 1 | 95 | 95 |
 | **total** | **253** | **1,919** | **1,853** |
 
-Every column sums to its total. The two on the absent row are
-`openZH/covid_19`, which is one of the 4 unreadable and so sits in the
-profile's `unknown` map with 95 fork pull requests, and
-`metadata-swiss/opendata-swiss`, which is in neither `repos` nor `unknown` with
-10. Neither was ever classified, so neither can be placed on either side of the
-split.
+Every column sums to its total. The one on the absent row is `openZH/covid_19`,
+which is one of the 4 unreadable and so sits in the profile's `unknown` map
+with 95 fork pull requests. It was never classified, so it cannot be placed on
+either side of the split.
 
-The quotable figure is **254 of 316**. For the 1,494 there was no pipeline to
+The quotable figure is **264 of 326**. For the 1,494 there was no pipeline to
 attach a check to, and counting those as unchecked would be counting the
 absence of CI as a gate nobody opened. What survives the join is still a real
 finding, that four in five fork pull requests to a repository which does check
@@ -323,7 +322,7 @@ Over fork pull requests to repositories with a pull-request-triggered pipeline:
 | check outcome | fork PRs | merged | merge rate |
 | --- | ---: | ---: | ---: |
 | passed | 42 | 36 | 85.7% |
-| no check run | 254 | 168 | 66.1% |
+| no check run | 264 | 169 | 64.0% |
 | failed | 20 | 9 | 45.0% |
 
 **Unrestricted, the ordering inverts.** Across all 1,919 fork pull requests,
@@ -353,7 +352,7 @@ non-merge, so checks are acted on where they exist.
 | `credentials-unclear` 152 | **As a count of what the tool could not read**, yes. As a property of the corpus, no: it is partly a measure of the rule tables |
 | 17 proven of 1340 | **Yes as a floor**, with the reason it is low, which is the corpus and not the method |
 | 7 of 17 proven contradicting the classifier | **Yes**, as the direction of the error: the classifier over-claims |
-| 254 of 316 fork pull requests unchecked | **Yes, and only with the restriction in the same sentence** |
+| 264 of 326 fork pull requests unchecked | **Yes, and only with the restriction in the same sentence** |
 | Merge rate ordering by check outcome | **Yes, and only with the restriction.** Unrestricted it inverts |
 | **1,853 fork pull requests with no checks** | **No.** It counts pull requests to repositories with no pipeline for a check to come from |
 | Any single repository's label | **No.** It is a hint. Read its `signals` |
@@ -387,28 +386,22 @@ exists.
 
 ## Disagreements
 
-Figures here conflict with prose elsewhere in this repository. Each is recorded
-and left unresolved rather than reconciled in either direction.
+The join every figure above is made on, and the one figure that reads
+differently elsewhere in this repository.
 
-**The absent row of the join.** `EXPERIMENTS.md` gives the with-pipeline row as
-79, 316 and 254, which is what the recomputation above produces, and the
-merge-rate no-check row as 254 at 66.1%, likewise. Its absent row, however,
-reads 1 repository, 95 fork pull requests and 95 with no checks, so its columns
-sum to 252, 1,909 and 1,843 against totals of 253, 1,919 and 1,853 stated in
-the surrounding prose of the same entry. The missing repository is
-`metadata-swiss/opendata-swiss` and its 10 pull requests. A later paragraph of
-that entry also says "the gate exists in those 80 repositories" against its own
-79. This is the second item on the [reviewer checklist](../README.md) catching
-the repository that wrote it.
-
-**The join key.** The committed `ciprofile.fork_observation` joins on the
-profile's own repository key. This run joins on the upstream's current name,
-which is what the fork observation measures and what the predecessor
-implementation used. The two differ on repositories GitHub has renamed: under
-the key join `metadata-swiss/opendata-swiss` lands on the with-pipeline row,
-which gives 80, 326 and 264 and a no-check merge row of 264 at 64.0%. Both
-joins are defensible and they are not the same measurement, which is the
-argument for naming the key beside the figure.
+**The join key.** Every join between the fork observation and the privilege
+profile is made on the profile's own repository key, which is the key the fork
+records are written under, so a repository is matched against its own
+classification. The committed `ciprofile.fork_observation` joins the same way.
+The fork records separately carry the upstream's current name, and a mirror
+corpus contains upstreams GitHub has renamed or transferred since the mirror
+was taken, so a name-based join is unreliable: it drops every renamed
+repository into the absent row, where it is counted as unclassified although it
+was classified. `opendata-swiss/metadata.swiss` is such a case. Its fork record
+carries `name_with_owner: metadata-swiss/opendata-swiss`, the profile
+classifies `opendata-swiss/metadata.swiss` as `acts-on-forge`, and so it
+belongs on the with-pipeline row. A join on the current name puts it on the
+absent row instead.
 
 **The denominator.** `README.md` and `EXPERIMENTS.md` both describe this corpus
 as having 361 repositories with a pull-request-triggered pipeline, and give
