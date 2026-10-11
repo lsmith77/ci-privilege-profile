@@ -17,5 +17,7 @@ approaches are worth trying.
     cache.py       the evidence cache, and refusing to misread one
     report.py      the profile JSON and the printed summary
     fixtures.py    the offline corpus and its expectation table
+    differential.py  running the pipeline with nothing granted, and what a
+                   failure is allowed to be read as
     sources/       one adapter per forge, behind one interface
 """
