@@ -225,6 +225,12 @@ TRIGGER_NAME = re.compile(r"[a-z_][a-z0-9_]*")
 # frame.
 STEPS_KEY = re.compile(r"^(?P<ind>[ \t]*)steps:[ \t]*$")
 LIST_ITEM = re.compile(r"^(?P<ind>[ \t]*)-[ \t]+\S")
+# `jobs:` at the top level, and one job's key inside it. Only needed by the
+# scope-aware reading below, which has to know which job a step sits in; every
+# other reading treats the whole of a workflow outside its `steps:` blocks as
+# one frame.
+JOBS_KEY = re.compile(r"^jobs:[ \t]*$")
+JOB_KEY = re.compile(r"""^[ \t]+['"]?[\w.-]+['"]?:[ \t]*$""")
 # A GitLab job is the unit instead: its `script:` is a list of commands rather
 # than of steps with their own keys, and the job is the smallest thing that can
 # be dropped on its own. These top-level keys are not jobs.
@@ -530,6 +536,29 @@ def _actions_step_nodes(node):
     return out
 
 
+def _step_items(body):
+    """[one text per list item] from a dedented `steps:` block body.
+
+    Shared by the line reader's two walks over a `steps:` block, so the
+    scope-aware reading below cuts steps exactly where actions_steps() does.
+    Two implementations of this split would diverge, and the scope-aware one
+    checks itself against the other.
+    """
+    steps, item_col, cur = [], None, []
+    for b in body:
+        indent = len(b) - len(b.lstrip())
+        if LIST_ITEM.match(b) and item_col in (None, indent):
+            item_col = indent
+            if cur:
+                steps.append("\n".join(cur))
+            cur = [b]
+        elif cur:
+            cur.append(b)
+    if cur:
+        steps.append("\n".join(cur))
+    return steps
+
+
 def actions_steps(text):
     """([one text per step], everything outside every `steps:` block).
 
@@ -538,6 +567,10 @@ def actions_steps(text):
     that as the unattributable case rather than guessing which step it was
     meant for. That is why the frame is returned beside the steps instead of
     being thrown away.
+
+    The frame is one text for the whole file, so it says that *something*
+    enclosing *some* step holds a privilege and never which step. Where that
+    distinction is the question, units_with_scope() is the reading to use.
     """
     lines = text.splitlines()
     node = _compose(text)
@@ -561,21 +594,93 @@ def actions_steps(text):
         col = len(m.group("ind"))
         body, end = _block_body(lines, i, col, seq=True)
         used.update(range(i, end))
-        item_col, cur = None, []
-        for b in body:
-            indent = len(b) - len(b.lstrip())
-            if LIST_ITEM.match(b) and item_col in (None, indent):
-                item_col = indent
-                if cur:
-                    steps.append("\n".join(cur))
-                cur = [b]
-            elif cur:
-                cur.append(b)
-        if cur:
-            steps.append("\n".join(cur))
+        steps += _step_items(body)
         i = end
     frame = [l for n, l in enumerate(lines) if n not in used]
     return steps, "\n".join(frame)
+
+
+def _line_reader_jobs(lines):
+    """[(job start line, job stop line, the workflow-level lines)].
+
+    The line reader's own job segmentation, needed only by the scope-aware
+    reading below. `jobs:` at column zero, then the keys at the shallowest
+    indent inside it; everything outside that block is workflow level.
+    """
+    i = next((n for n, l in enumerate(lines) if JOBS_KEY.match(l)), None)
+    if i is None:
+        return []
+    _body, end = _block_body(lines, i, 0)
+    workflow = lines[:i] + lines[end:]
+    inner = range(i + 1, end)
+    depth = next((len(lines[n]) - len(lines[n].lstrip())
+                  for n in inner if lines[n].strip()), None)
+    starts = [n for n in inner if JOB_KEY.match(lines[n])
+              and len(lines[n]) - len(lines[n].lstrip()) == depth]
+    return [(s, starts[k + 1] if k + 1 < len(starts) else end, workflow)
+            for k, s in enumerate(starts)]
+
+
+def actions_steps_with_scope(text):
+    """[(one text per step, the text of the scopes enclosing that step)].
+
+    The frame actions_steps() returns is one text for the whole file, which
+    cannot answer whether a privilege is reachable *from a given step*: a
+    credential in job A's `env:` sits in the same frame as a step in job B and
+    would read as available to it. So this reading cuts the enclosing text per
+    step instead: the workflow's own top-level keys (where a workflow-level
+    `env:` lives) plus the keys of the one job the step is in, minus that job's
+    `steps:` block.
+
+    The second element is None where the enclosing scope could not be worked
+    out. It is not an empty scope, and a caller must not read it as one: every
+    caller takes it the privileged way.
+    """
+    lines = text.splitlines()
+    node = _compose(text)
+    if node is not None:
+        jobs = _entry(node, "jobs")
+        if not _is_map(jobs):
+            return []
+        in_jobs = range(jobs.start_mark.line, _node_end(jobs))
+        workflow = [l for n, l in enumerate(lines) if n not in in_jobs]
+        out = []
+        for _name, job in jobs.value:
+            steps = _entry(job, "steps")
+            if not _is_seq(steps):
+                continue
+            start, stop = steps.start_mark.line, _node_end(steps)
+            frame = workflow + [
+                lines[n] for n in range(job.start_mark.line, _node_end(job))
+                if not start <= n < stop]
+            for s, e in _item_spans(list(steps.value), stop):
+                out.append((_span(lines, s, e), "\n".join(frame)))
+        return out
+    out, placed = [], []
+    for start, stop, workflow in _line_reader_jobs(lines):
+        i = start
+        while i < stop:
+            m = STEPS_KEY.match(lines[i])
+            if not m:
+                i += 1
+                continue
+            col = len(m.group("ind"))
+            body, end = _block_body(lines, i, col, seq=True)
+            frame = workflow + [l for n, l in enumerate(lines)
+                                if start <= n < stop and not i <= n < end]
+            for step in _step_items(body):
+                out.append((step, "\n".join(frame)))
+                placed.append(step)
+            i = end
+    # The check that makes the two walks one reading rather than two. A step
+    # actions_steps() finds and this did not place in a job would otherwise
+    # vanish from the scope-aware answer, which is the flattering direction:
+    # a step nobody looks at consumes nothing. So every step is handed back,
+    # and the ones that could not be placed carry no scope.
+    every, _frame = actions_steps(text)
+    if placed != every:
+        return [(step, None) for step in every]
+    return out
 
 
 def gitlab_jobs(text):
@@ -610,3 +715,24 @@ def gitlab_jobs(text):
 def privilege_units(kind, text):
     """The things a rule can ask its question of, and what is left over."""
     return gitlab_jobs(text) if kind == "gitlab" else actions_steps(text)
+
+
+def units_with_scope(kind, text):
+    """[(unit, the text enclosing it)], for a rule that asks about inheritance.
+
+    The same units privilege_units() cuts, each paired with the scopes it
+    inherits from rather than with one frame for the whole file. A None scope
+    means it could not be worked out, which is never to be read as an empty
+    one.
+
+    GitLab's unit is the job, so a job's own `variables:` are inside the unit
+    and the enclosing text is the global keys, where a global `variables:`
+    lives. Both are inherited by every command in the job's `script:`, and
+    both are therefore reachable from a unit; what the reading cannot do there
+    is tell one command in a job's script from another, so a GitLab job is
+    judged whole.
+    """
+    if kind == "gitlab":
+        jobs, frame = gitlab_jobs(text)
+        return [(job, frame) for job in jobs]
+    return actions_steps_with_scope(text)
