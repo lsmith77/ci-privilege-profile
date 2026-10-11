@@ -78,9 +78,20 @@ that no pull request triggers is not a repository with no CI.
 
 Reported beside the class, never as one: `thin-wrapper` (every run step is a
 single invocation, so a contributor can reproduce the pipeline by hand),
-`uses-pull-request-target`, `uses-forge-token`, `assumes-toolchain`, and the
+`uses-pull-request-target`, `uses-forge-token`, `assumes-toolchain`, the
 `credentials-reporting-only` / `credentials-test-time` / `credentials-unclear`
-axis.
+axis, and the `test-step-unprivileged` / `test-step-privileged` /
+`test-step-unidentified` determination.
+
+That last one asks a narrower question than the credentials axis and is
+answerable more often: not whether every privileged step in the scope is
+droppable, but whether the step that **invokes the test suite** consumes a
+credential. A credential reachable by inheritance from a workflow-level or
+job-level `env:` counts as available to it, an unrecognised command form
+answers "not identifiable" rather than "unprivileged", and where reachability
+cannot be determined the step counts as privileged. Of the 361 repositories
+above it reads 109 as having a test suite that runs unprivileged, and 220 as
+not saying enough to tell.
 
 Every repository gets both scopes. The **pull-request scope** is the one to
 quote, because it answers what a contributor must be able to run. The

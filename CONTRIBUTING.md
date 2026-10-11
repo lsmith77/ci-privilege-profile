@@ -8,7 +8,7 @@ says which.
 
 | | |
 | --- | --- |
-| `ciprofile/structure.py` | Where pipelines live; cutting their text into the units a rule asks of |
+| `ciprofile/structure.py` | Where pipelines live; cutting their text into the units a rule asks of, and into the scopes a unit inherits from |
 | `ciprofile/rules.py` | The signal tables, and what a privilege is for |
 | `ciprofile/classify.py` | The two scopes, the ladder, the derived figures |
 | `ciprofile/sweep.py` | Discovery, and what a failure means |
@@ -90,12 +90,15 @@ vacuous until somebody broke the thing they claimed to test and watched them
 pass anyway. The procedure is cheap: comment out the rule, run `./test.sh`, and
 if nothing goes red the check is decoration. Put the rule back.
 
-Four worth re-running after any substantial change, because they are the ones
-whose failure is invisible in the output:
+These are worth re-running after any substantial change, because they are the
+ones whose failure is invisible in the output:
 
 | Mutate | A check that must go red |
 | --- | --- |
 | Reverse the two tests in `credentials_purpose()` so reporting wins over unclear | the asymmetry checks in `tests/test_axis.py` |
+| Reverse the two tests in `test_step_privilege()` so clean wins over privileged | "an undeterminable scope is privileged, never clean" |
+| Stop reading the enclosing scope in `test_step_signals()` | "an inherited credential is available to the test step", and the fixture table |
+| Make `units_with_scope()` hand back the whole-file frame instead of per-step scopes | "a credential in another job does not reach this one" |
 | Make `empty_verdict()` read "the source did not say" as empty | "an unreadable repository is unknown, never no-pipeline" |
 | Stop consulting the `push:` input of the build-and-push action | "a conditional push: input is still a push", and the fixture table |
 | Make the line reader refuse a sequence at its key's own column | "a steps: block at its own column still yields steps" |

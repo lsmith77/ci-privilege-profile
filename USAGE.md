@@ -138,7 +138,9 @@ Within those, in descending order of how much weight they will bear:
 | `uses-pull-request-target` (the privileged-trigger count) | **Yes**; it is held strictly to the `on:` declaration |
 | The forge-token split (how many repositories' class rests on that one judgement) | **Yes**; it exists to let a sceptic restate your headline |
 | `assumes-toolchain` and the `toolchain-*` signals | **Yes**, as a statement about capacity, never about privilege |
+| The `test-step-*` tally (what the step invoking the tests consumes) | **Yes** as three numbers together; the not-identifiable count is part of the answer |
 | "Contributor-runnable if reporting steps are dropped" | **Only with its uncertainty band**, which is usually larger than the figure |
+| "With a test suite that runs unprivileged" | **Only with the not-identifiable count beside it**, which is the larger number; it is a positive claim about the test steps the tool could find, never about the ones it could not |
 | Any single repository's label | **No.** It is a hint. Read its `signals`. |
 | Anything from `--limit`, a GitLab sample, or a partial cache | **No.** Every such output marks itself partial, loudly |
 

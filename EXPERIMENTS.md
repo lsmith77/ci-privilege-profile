@@ -465,6 +465,120 @@ rather than as a bug to be fixed.
 
 ---
 
+## Narrowing the band by asking only about the test step
+
+**The question.** The axis above asks whether *every* privileged step in a
+scope is droppable, and one step nothing recognised holds the whole scope
+unclear. That is the right rule for that question and it is what leaves 155 of
+361 repositories unreadable. A narrower question should be answerable more
+often: **does the step that actually invokes the test suite consume a
+credential?** If it does not, the tests can run without the project's secrets
+whatever the publish and reporting steps around them need, which is what a
+contributor wanting a pre-flight signal is asking.
+
+**What was done.** A per-scope determination with three values, off the
+precedence ladder and changing no primary class, reported as its own tally
+beside the credentials axis:
+
+- `test-step-unprivileged`: an identified test invocation with no credential
+  available to it;
+- `test-step-privileged`: one with a credential available;
+- `test-step-unidentified`: no test invocation could be identified.
+
+Three things had to be got right, in descending order of how badly getting them
+wrong would mislead.
+
+**Inherited environment, which is the trap.** A credential mapped in at
+workflow level or job level `env:`, or in GitLab's global or job `variables:`,
+is in the environment of every step in that scope including the test step,
+although the step names no secret. The existing unit segmentation could not
+answer this: `privilege_units()` returns the steps plus **one frame for the
+whole file**, which is exactly right for asking whether a privilege is
+unattributable and useless for asking whether one is reachable from a given
+step, because a credential in the publish job's `env:` sits in the same frame
+as the test job's steps. So a second reading was added,
+`structure.units_with_scope()`, which hands each step the workflow's own
+top-level keys plus the keys of the one job it sits in, minus that job's
+`steps:` block. In the corpus the difference is 6 repositories read as
+privileged through inheritance alone that the step's own text would have called
+clean.
+
+**The error direction.** Where whether a credential reaches the test step
+cannot be settled, the step is privileged. That covers a step whose enclosing
+scope could not be cut out of the file and a GitLab file whose variables come
+from an `include:` or an `extends:`, and it is the same asymmetry the
+credentials axis enforces.
+
+**Recognition, not inference.** An explicit list of test-invoking command
+forms, and an unrecognised form yields "not identifiable" rather than
+"unprivileged". The direction matters both ways here, which is why the list is
+kept to forms that mean a test run and nothing else: a missed form costs a
+reading, while a spurious match on a clean step would hand out the flattering
+answer for free.
+
+**Measured effect: it resolves about a third of the unclear band, and the
+useful answer in about a fifth.** Of 361 repositories with a
+pull-request-triggered pipeline:
+
+| determination | repositories | of the 155 unclear |
+| --- | ---: | ---: |
+| test-step-unprivileged | 109 | 35 |
+| test-step-privileged | 32 | 18 |
+| **test-step-unidentified** | **220** | **102** |
+
+So the determination says something about 53 of the 155 repositories the
+credentials axis could not read, and of those 35 say the tests run
+unprivileged. **That is a real gain and it is not the gain that was hoped
+for**: two thirds of the band is unresolved, and for the same reason the band
+exists at all. The obstacle is no longer the purpose of a privilege being
+unrecorded; it is that **the test invocation itself is not in the file**. The
+residual, grouped by cause over the 252 repositories not read as unprivileged:
+
+one bucket each, so the column sums:
+
+| obstacle | repositories |
+| --- | ---: |
+| unidentified: run steps present, no recognised test form (project shell scripts, docker-compose harnesses, nix/devenv wrappers, `${{ inputs.test-command }}`) | 84 |
+| unidentified: every step is a call out of the file, a reusable workflow or a composite action | 53 |
+| unidentified: the tests are behind a script or a make/task target this cannot look into | 37 |
+| unidentified: no run or script step at all, only actions | 26 |
+| unidentified: GitLab script lines, none recognised | 20 |
+| privileged: a credential named in the test step itself | 14 |
+| privileged: a dependency-resolution or cloud credential the tests need | 6 |
+| privileged: a credential inherited from a workflow-level or job-level `env:`/`variables:` | 6 |
+| privileged: a privileged act in the same step as the test invocation | 4 |
+| privileged: GitLab `include:`/`extends:`, so the variables are in text never fetched | 2 |
+
+Reading a sample of the largest bucket out of the evidence cache showed **no
+missing cluster worth a rule**: it is dominated by workflows that are not test
+workflows (releases, labelling, image builds) and by test harnesses whose entry
+point is a name only the project knows. One addition came out of the sample,
+`ant … test`, and it moved exactly one repository.
+
+**Limitation that remains.** The three obstacle groups at the top of that table
+are the same obstacle in three spellings: the command that runs the tests is
+somewhere this tool does not read. No extension of the command list reaches
+them, and the five `unidentified` rows together are the sample a
+[differential-execution](#approaches-not-tried) run would have to cover, which
+is the one approach that would.
+
+**What it led to.** The determination is kept, because 109 repositories with a
+test suite that demonstrably runs unprivileged is a stronger and narrower claim
+than anything the credentials axis produces, and because its band is reported
+beside it every time. The forge-token carve-out was measured here too and
+**changed no repository's determination**: 14 scopes have a test step reached by
+the forge's own auto-minted token, and all 14 also have a real credential
+reaching one, so the judgement that moves the headline distribution moves
+nothing at all in this figure.
+
+**If you are starting fresh.** Narrowing the question is worth trying before
+adding rules to a wide one; it moved more here than three attempts at narrowing
+the band did. But check first where the thing you are narrowing *to* is
+written. The purpose of a credential is not in the file, and neither, often, is
+the name of the test command.
+
+---
+
 ## Caching the fetched text, and doing it too late
 
 **The question.** Why does every rule change take an afternoon?
