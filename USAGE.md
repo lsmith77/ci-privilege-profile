@@ -157,6 +157,7 @@ the credentials axis holds to.
 | the host's container daemon is withheld from the workflow container | the runner mounts it by default, which would hand a third-party pipeline control of the daemon running it |
 | `--timeout`, per repository, defaulted and overridable | 20 minutes by default, which is generous on purpose: a budget tight enough to cut a real run turns the measurement into a measurement of the host |
 | the clone is temporary and removed in a `finally` | including when the runner raised, so a failed run leaves nothing of somebody else's repository behind |
+| the disk is checked before the first repository and again between each of them, and refuses below a 10 GB floor unless `ALLOW_LOW_DISK=1` | the risk is the machine rather than this tool's own appetite. Below the floor mid-run it stops with the results it already has, because a short run whose results survive is worth more than a long one that dies on a full disk |
 | one at a time, with pacing between clones | the clones come from a mirror rather than from the upstream host, and a mirror on a constrained allocation finds a clone far more expensive than an API read |
 
 ### What you need installed, and what it costs
@@ -175,6 +176,41 @@ or Jenkins pipeline cannot be sampled at all. **On an ARM host the runner
 images are amd64 and run under emulation**, which dominates the cost: a small
 dependency install and build takes minutes rather than seconds, and the first
 repository also pays for the image pull. Budget accordingly.
+
+### Disk
+
+The tooling is **roughly 3.2 GB and is paid once**: the runner image measures
+1.63 GB and the `act-toolcache` volume it fills measures 1.57 GB. **Each
+additional repository wants about 2 GB** of transient container layers, and
+those do not accumulate, because the container is removed per workflow file.
+What does grow across a run is the toolcache, by whatever a workflow asks for
+that it has not seen before, so a sample whose repositories want different
+toolchain versions costs more than one that shares them. A first run of eight
+repositories therefore wants single-digit gigabytes, not tens.
+
+**That is not the figure to plan around.** The run refuses to start below **10
+GB available to the container daemon**, and re-reads the figure between
+repositories, because the machine is the risk and not this tool's appetite: the
+host this was developed against carried 60 GB of images, 58 GB of volumes and
+47 GB of build cache from unrelated work against 54 GB of free space, and a
+multi-hour run that dies at repository six has cost hours and produced nothing.
+The refusal names the floor, what it found and how much to free. Dropping below
+the floor part way through stops the run with the results it already has and
+records the stop in the output. `ALLOW_LOW_DISK=1` proceeds anyway, in the same
+shape as `ALLOW_LARGE_SAMPLE`.
+
+The figure is the **daemon's** wherever it can be read, not the host's: on
+macOS the daemon runs in a VM with a disk of its own, so a host with room to
+spare says nothing about whether the next image pull fits. Where only the host
+figure can be read, the output records that substitution rather than passing it
+off as the daemon's. What was available at the start and at the end of the run
+is recorded either way, so a reader can see what the run cost.
+
+**Nothing is ever reclaimed for you.** The images, volumes and build cache on
+the machine belong to whoever owns it, and a measurement instrument that
+deleted them would be a worse failure than a run that declined to start. On a
+refusal the harness prints what Docker reports as reclaimable and the commands
+that would reclaim it, and stops there.
 
 ## Outputs
 
