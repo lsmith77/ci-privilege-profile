@@ -338,10 +338,56 @@ writing a more mergeable change. The passing arm is small at n=42. The firmer
 half is the bottom row, which rests on larger numbers: a failing check predicts
 non-merge, so checks are acted on where they exist.
 
+## Upstream CI activity, fetched 2026-10-12
+
+A later measurement over the same corpus, and the only one here that counts
+runs rather than configuration. Two departures from the descriptor above, both
+of which bear on how its figures compare with the rest of this write-up.
+**It was fetched on 2026-10-12**, two days after everything else, and **its
+denominator is the 1428 basis rather than 1409**, because it reads the profile
+file directly and that file includes the organisation profile repositories. Its
+subset is therefore the 361 repositories with a pull-request-triggered pipeline
+on that basis, not the smaller subset the figures above are over.
+
+Of those 361, 323 could be asked of the upstream host's Actions API. 26 hold a
+pipeline in a grammar that API cannot answer for and 12 have no upstream host
+established; neither group is a zero. On the pull-request event:
+
+| status | repositories |
+| --- | ---: |
+| passing, newest concluded run inside 30 days | 86 |
+| failing, same window | 26 |
+| awaiting approval | 5 |
+| inconclusive | 2 |
+| ran, newest outside the window | 104 |
+| never ran | 100 |
+| not measured, with reason | 38 |
+
+**100 of 323 declare a pull-request pipeline that has never run once.** Over
+every event rather than the pull-request one, only 55 have never run anything,
+so the difference is repositories whose CI runs on push and has never been
+exercised by a pull request. 119 of 323 ran on the pull-request event inside
+the window.
+
+**These runs happened upstream**, on the host each project is developed on, and
+not on the mirror platform, which runs no pipeline at all. The reading of a
+zero is "this project's pipeline does not run where the project is developed".
+
+It also splits the differential runs' non-answers, which had been one class.
+Of the 20 attempts that reached no answer, 10 are pipelines with no upstream
+runs either, 4 fail upstream as well, 3 have no run inside the window to
+compare against, 1 is undecidable, and **2 rows covering 1 repository** are
+cases where the pipeline passes upstream and failed locally. One repository of
+this corpus is a demonstrated local-environment failure.
+
 ## Quotable, and not
 
 | Figure | Quotable? |
 | --- | --- |
+| **100 of 323 never ran on the pull-request event** | **Yes**, with the 38 not measured beside it and the word "upstream" in the sentence. It is the figure that qualifies every other one here |
+| 55 of 323 never ran on any event | **Yes**, and best quoted next to the 100, since the gap is the finding |
+| `passing` 86 | **Only with the 30-day window named.** It describes the newest concluded run, not the pipeline's history |
+| 1 repository as a local-environment failure | **Yes**, as a per-repository statement. The 20 non-answers it comes out of are not a distribution |
 | The pull-request-scope class distribution over 1409 | **Yes**, as a shape, with the 4 unreadable repositories named beside it |
 | `no-pipeline` 864, with `other_ci` 74 beside it | **Yes**, never on its own |
 | `uses-pull-request-target` 5 | **Yes**; held strictly to the `on:` declaration |

@@ -29,16 +29,23 @@ over-claim: the string `docker push` in a disabled job reads the same as a live
 one. The per-repository answer is a hint; a distribution over a corpus is a
 shape. Neither is a measurement.
 
-There is one exception and it is deliberately small. `ciprofile.differential`
-runs a named handful of repositories' pull-request workflows in a container
-with **no secret supplied**, and observes whether they execute. That reaches
-the cases reading cannot, because it does not have to *find* the test command,
-and a repository it reads as having run is the only per-repository claim here
-worth quoting. It is a handful on purpose: it executes third-party code, the
-sample size has no default, and its selection rule picks for what a local
-runner can execute, so its distribution is not a distribution over anything.
+Two modes are exceptions. `ciprofile.differential` runs a named handful of
+repositories' pull-request workflows in a container with **no secret
+supplied**, and observes whether they execute. That reaches the cases reading
+cannot, because it does not have to *find* the test command, and a repository
+it reads as having run is the only per-repository claim here worth quoting. It
+is a handful on purpose: it executes third-party code, the sample size has no
+default, and its selection rule picks for what a local runner can execute, so
+its distribution is not a distribution over anything.
 [EXPERIMENTS.md](EXPERIMENTS.md#differential-execution-running-the-pipeline-with-nothing-granted)
 has what a first sample of it measured.
+
+`ciprofile.ci_activity` asks the host's API what each declared pipeline has
+actually done. It runs nothing itself, but it counts runs rather than
+intentions, and it is the only mode here whose figures are an observation over
+the whole measurable corpus rather than a sample of it.
+[EXPERIMENTS.md](EXPERIMENTS.md#asking-whether-the-declared-pipeline-ever-ran)
+has what it found, which is the finding that qualifies every other one.
 
 **It cannot tell you what a privilege is FOR, most of the time.** The tool
 tries: a secret that only uploads coverage can be skipped, while a secret that
@@ -72,12 +79,54 @@ put in. A `--limit` produces a prefix of a listing, which is not a sample:
 when that was first tried on a name-ordered listing, 17 of the first 25
 repositories were organisation metadata repositories holding no software.
 
-**Most of the uncertainty above is the corpus, not the tool.** In the corpus
-this was developed against, only 361 of 1428 classified repositories have a
-pipeline a pull request triggers; 220 of those 361 yield no identifiable test
-invocation; and of the 326 fork pull requests landing on a repository that does
-check pull requests, 264 carried no check at all, which is what starves the one
-instrument that produces ground truth. [Why this class of corpus is hard to
+**Most of the uncertainty above is the corpus, not the tool.** Each strategy
+tried against it was stopped by a different property of the data set rather
+than by a defect in the approach, and the last one explains the others.
+Figures are over the 361 of 1428 classified repositories with a
+pull-request-triggered pipeline, the 1340 the fork observation reached, and the
+323 the activity sweep could ask about.
+
+- **Reading the pipeline text.** Defeated by delegation: the command that
+  matters is usually somewhere else, behind a project script, a make target, a
+  reusable workflow in another repository or a composite action. 220 of 361
+  yield no identifiable test invocation at all.
+- **Asking what a credential is for.** Defeated by configuration not recording
+  it. A secret that uploads coverage and a secret that resolves private
+  dependencies look identical in the file. 155 of 361 could not be read either
+  way.
+- **Asking only whether the test step is privileged.** A narrower question, so
+  it decided more, but the same delegation stops it: it resolved 53 of those
+  155 and said the tests run unprivileged for 35.
+- **Observing fork pull requests**, which is the only instrument here that
+  produces ground truth, since a host withholds secrets from such runs.
+  Defeated by there being little to observe: 253 of 1340 repositories have ever
+  received one, 264 of the 326 that landed on a repository which does check
+  pull requests carried no check, and the method proved something about 17.
+- **Running the pipeline with no secret supplied.** 20 of the 27 attempts on
+  record reached no answer, and the expectation was that the local runner's
+  image was why. It is not. Exactly one repository in the corpus is a case
+  where the pipeline passes upstream and failed here. 10 of those 20 had never
+  run upstream either and 4 fail upstream too, so what this mostly executed was
+  configuration that does not run anywhere.
+- **Asking the host what has actually run.** The cheapest instrument here, the
+  last one tried, and the only one this corpus does not defeat, because it asks
+  about runs rather than about intentions. 100 of the 323 repositories it could
+  ask about have never had a single pull-request run upstream.
+
+That last figure is the one to carry away. **Every other figure here counts
+configuration**, and in this corpus configuration and working CI are not the
+same thing. `ciprofile.ci_activity` is also what tells a local environment
+failure apart from a dead pipeline, so in a corpus of this shape it is the
+measurement to run first rather than last.
+
+**A more active corpus would get more out of the same tools**, and that is the
+most useful thing this project does not have. Contribution produces checked
+fork pull requests, which is ground truth no rule can produce; pipelines that
+run regularly make a local failure interpretable, because there is a working
+run to compare it against. Neither needs a new instrument, only a data set
+where the activity exists. A run against a platform with an active contributor
+community, opencode.de for instance, would say more than another run here.
+[Why this class of corpus is hard to
 measure](EXPERIMENTS.md#why-this-class-of-corpus-is-hard-to-measure) sets out
 each property, the instrument it defeats, and the measured consequence.
 

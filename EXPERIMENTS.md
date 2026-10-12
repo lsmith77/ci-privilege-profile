@@ -56,6 +56,17 @@ applies to that quarter; the rest of the corpus is outside the question rather
 than answered by it, and a share quoted without that denominator will be read
 as a share of the corpus.
 
+**A declared pipeline is often one that has never run.** Of the 361, 323 could
+be asked of the upstream host's API, and 100 of those have no recorded
+pull-request run at all, with a further 104 whose newest falls outside a
+30-day window. Every other figure in this document counts configuration: a
+repository declaring the pull-request event is a repository that checks pull
+requests as far as reading can tell, which is correct about the declaration and
+silent on whether it was ever acted on. [Asking whether the declared pipeline
+ever ran](#asking-whether-the-declared-pipeline-ever-ran) is the measurement
+that separates the two, and it is both the cheapest instrument here and the
+only one this corpus does not defeat.
+
 **Contribution from outside exists but is thin, and CI almost never runs on
 it.** 253 of the 1340 repositories the fork observation reached carry any fork
 pull request at all. Of the 326 fork pull requests landing on a repository that
@@ -108,8 +119,13 @@ over the same corpus later is the cheapest improvement available, and the
 baseline has to be taken before anything moves because no later sweep can
 reconstruct it. Generating the evidence directly, by executing a pipeline with
 its secrets stripped, is the only instrument that works on a repository nobody
-has contributed to; what it decided on a first sample, and what it cost, are in
-[differential execution](#differential-execution-running-the-pipeline-with-nothing-granted).
+has contributed to, but it works only where the pipeline itself works: of its
+attempts that reached no answer, half were pipelines with no upstream runs, and
+one repository of the corpus is a case where the local environment was
+demonstrably the obstacle. [Differential
+execution](#differential-execution-running-the-pipeline-with-nothing-granted)
+has what it decided and what it cost; the activity sweep is what tells those
+two readings apart.
 
 ---
 
@@ -1076,6 +1092,113 @@ flatters, and it is very hard to change afterwards. And read your runner's
 actual log output before writing anything that parses it. Two of the three
 defects that cost real time here were differences between what the runner
 prints and what its documentation says it prints.
+
+---
+
+## Asking whether the declared pipeline ever ran
+
+**The question.** Every entry above this one counts configuration. A repository
+whose workflow declares the pull-request event is counted as a repository that
+checks pull requests, which is correct about the declaration and silent on
+whether the declaration was ever acted on. The host already knows the
+difference, and it had not been asked. This was the last strategy tried and it
+should have been the first.
+
+**What was done.** For each repository in the pull-request-triggered subset
+whose scope holds at least one Actions workflow, the Actions REST API is asked
+for `total_count`, the conclusions of the newest runs, the newest successful
+run, and the same restricted to `?event=pull_request`, which is the event the
+rest of the tool quotes. Seven statuses: `never-ran`, `ran-not-recently`,
+`passing`, `failing`, `awaiting-approval`, `inconclusive`, and `unknown`
+carrying its reason. The recency window is 30 days, is the measurement's own
+choice, and is written into the output because "currently passing" is otherwise
+a claim whose window a reader has to guess.
+
+**What it measured.** Of the 361 repositories with a pull-request-triggered
+pipeline, 323 could be asked. On the pull-request event:
+
+| status | repositories |
+| --- | ---: |
+| passing inside the window | 86 |
+| failing inside the window | 26 |
+| awaiting approval | 5 |
+| inconclusive | 2 |
+| ran, but not inside the window | 104 |
+| **never ran** | **100** |
+| not measured | 38 |
+
+**100 of 323 declare a pipeline on the pull-request event that has never run
+once.** Counting every event instead of the pull-request one, 55 have never run
+anything at all, so the gap between those two figures is repositories whose CI
+runs on push and has never been exercised by a pull request. 119 of 323 ran
+inside the window on the pull-request event. That is the corpus's real rate of
+operated pull-request checking, and it is roughly a third of the subset the
+rest of this document quotes shares over.
+
+**An unasked repository must not look like a dead one**, which is the whole
+measurement and the one place it could have gone quietly wrong. The 38 not
+measured carry a reason and are never a zero: 26 hold a pipeline in a grammar
+the Actions API cannot answer for, where counting the zero would be counting
+the wrong API, and 12 have no upstream host established. Two further
+qualifications are recorded rather than resolved. A run deleted through the API
+is indistinguishable here from one that never happened. And `total_count`
+counts runs of every workflow in the repository, not runs of the particular
+workflow a classification rested on.
+
+**The join is the trap, and it is the same one the fork observation hit.** The
+corpus keys repositories by the mirror's name while the upstream must be asked
+about under its current one, and those differ because upstreams get renamed and
+transferred. 6 of the 323 had been renamed since the mirror was taken. Nothing
+new is invented to resolve it: the fork observation's `name_with_owner` is an
+answer from the host and wins wherever it exists, a mapping file is an
+assertion and is used where it does not, and the corpus key is used only where
+the observation reached for that key and got nothing. 288 of 323 names came
+from the observation, 35 from the key.
+
+**It also settles what differential execution was measuring.** Joining each
+differential outcome to its upstream pull-request status splits the
+non-answers, which were previously a single undifferentiated class:
+
+| reading | cases |
+| --- | ---: |
+| dead pipeline, no upstream runs either | 10 |
+| fails upstream as well | 4 |
+| no upstream run inside the window to compare against | 3 |
+| **fidelity gap: passes upstream, failed here** | **2 rows, 1 repository** |
+| upstream status unknown | 1 |
+
+Of the 20 attempts that reached no answer, **exactly one repository is a case
+where the local runner was demonstrably the obstacle**, and it appears twice
+because it was attempted in two runs. Half of the rest are pipelines that run
+nowhere. The expectation going in was the opposite: that runner-image fidelity
+was the ceiling, and that a fuller image would raise the decisive rate. It
+would not have. [Differential
+execution](#differential-execution-running-the-pipeline-with-nothing-granted)
+records the selection rule that produced those attempts, and its cost figures
+stand; what changes is the reading of its failures.
+
+**The cost.** 1082 requests for 323 repositories, at most four each, against an
+authenticated budget of 5000 per hour read from the `x-ratelimit-*` headers
+rather than assumed. No clone, no execution, no container. That is two to three
+orders of magnitude cheaper than differential execution and it decided more.
+
+**For a mirror corpus these runs happened upstream**, on the host each project
+is developed on, not on the forge holding the mirror, which runs no pipeline at
+all. The honest reading of a zero is "this project's pipeline does not run
+where the project is developed", and every figure printed says so.
+
+**What it led to.** It is kept, and in a corpus of this shape it is the
+measurement to run first. It is also the one figure here that qualifies every
+other: a declared pipeline that has never run is configuration that the rest of
+this tool counted and nothing more.
+
+**If you are starting fresh.** Ask the host what ran before building anything
+that reads pipeline text, because the answer tells you what fraction of your
+corpus the reading will be describing. Decide on paper that an unanswerable
+repository is `unknown` and never a zero, since the two are indistinguishable
+in any output that does not separate them. And restrict by event from the
+start: a corpus whose CI runs on push and never on a pull request reads as
+healthy on the unrestricted count.
 
 ---
 
