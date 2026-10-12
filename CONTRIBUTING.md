@@ -15,6 +15,7 @@ says which.
 | `ciprofile/cache.py` | The evidence cache, and refusing to misread one |
 | `ciprofile/report.py` | The profile JSON and the printed summary |
 | `ciprofile/differential.py` | Running the pipeline with nothing granted; the guards that make it safe to, and what a failure is allowed to be read as |
+| `ciprofile/ci_activity.py` | Whether the declared pipeline ever ran upstream; the mirror-to-upstream join, and the control it gives the module above |
 | `ciprofile/sources/` | One adapter per forge, behind one interface |
 | `fixtures/ci/` | Synthetic repositories and the table they must classify as |
 

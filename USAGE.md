@@ -103,6 +103,73 @@ could prove something about 17 repositories. [That is itself a
 finding](EXPERIMENTS.md#observation-instead-of-inference-fork-pull-request-outcomes),
 and not the one that was expected.
 
+## Asking whether the declared pipeline ever ran
+
+```sh
+GITHUB_TOKEN=... python3 -m ciprofile.ci_activity \
+    --profile data/ci_profile.json --fork data/fork_pr_profile.json \
+    --differential data/differential_execution.json
+```
+
+Every other figure here counts **configuration**. A repository whose workflow
+declares the pull-request event is counted as a repository that checks pull
+requests, which is correct about the declaration and silent on whether the
+declaration was ever acted on. This mode asks GitHub's Actions API what each
+repository's workflows have actually done: `total_count`, the conclusions of
+the newest runs, the newest successful run, and the same restricted to
+`?event=pull_request`, which is the scope the rest of the tool quotes.
+
+**For a mirror corpus these runs happened upstream**, on the host each project
+is developed on, not on the forge holding the mirror, which runs no pipeline at
+all. Every figure printed says so, and the honest reading of a zero is "this
+project's pipeline does not run where the project is developed".
+
+Six statuses plus `unknown`. `never-ran` is the finding: a declared pipeline
+that has done nothing. `ran-not-recently` is a pipeline whose newest run falls
+outside the recency window, which is **30 days by default and recorded in the
+output**, because "currently passing" is otherwise a claim whose window a
+reader has to guess. `passing`, `failing` and `awaiting-approval` rest on the
+newest concluded run inside that window, and `inconclusive` is where it was
+cancelled, skipped or is still in flight.
+
+**A repository the API cannot answer for is `unknown` with the reason, never
+`never-ran`.** That distinction is the whole measurement: an unasked repository
+looks exactly like a dead one. The reason that matters most is
+`non-actions-pipeline`. A GitLab or Woodpecker pipeline has no Actions runs by
+construction, so counting its zero would be counting the wrong API, and those
+repositories are not asked about at all.
+
+### The join, which is the trap
+
+The corpus keys repositories by the **mirror's** name and the upstream must be
+asked about under its **current** one. Those differ: upstreams get renamed and
+transferred, so a join on either name alone loses repositories. Both names are
+recorded per repository, and nothing new is invented to resolve it:
+
+| | |
+| --- | --- |
+| `--fork FILE`, a `fork_pr_profile.json` | its per-repository `name_with_owner` is the upstream's name **as GitHub answered it**, so a rename or a transfer is already resolved there |
+| `--upstream FILE`, read by the fork observation's own `read_upstreams()` | the only thing that can state the upstream **host**, which cannot be guessed from a repository's name |
+| the corpus key as coordinates | allowed only where the fork observation reached for that key and got no answer. A key it recorded `host-unknown` or `non-github-upstream` is never guessed at, because those are statements about the host |
+
+Where both files cover a key, the fork observation's name wins: it is an answer
+and the mapping file is an assertion. One of the two is required, because a
+corpus of mirrors cannot be asked about under the mirrors' own names.
+
+### Also a control for differential execution
+
+`--differential FILE` joins each differential-execution outcome to that
+repository's upstream status. An `environment-failure` on a pipeline that
+passes upstream is a **fidelity gap** in the local runner; the same failure on
+a pipeline with no upstream runs is a **dead pipeline**, and reading it as a
+fidelity gap would be reading an absence as a defect. The reading rests on the
+pull-request-event status, because that is the event the local runner is given.
+
+At most four requests per repository against an authenticated hourly budget of
+5000, read from the `x-ratelimit-*` headers rather than assumed. Below the
+floor the run stops, writes what it has, marks itself `partial`, and records
+every unreached repository as `rate-budget-exhausted`.
+
 ## Running it instead of reading it
 
 ```sh
@@ -249,6 +316,7 @@ that would reclaim it, and stops there.
 | `ci_profile_from_cache.json` | A cached re-analysis, which never overwrites the sweep's own profile |
 | `fork_pr_profile.json` | The fork observation |
 | `differential_execution.json` | A differential-execution run: the outcome per repository, the selection rule, and the runner it used |
+| `ci_activity_profile.json` | The upstream CI activity sweep: what each declared pipeline has actually done, and the control table |
 
 Each writer refuses the other files' names, by basename. A sweep of a sizeable
 corpus costs hours, and a mode that overwrote another mode's output would
@@ -282,6 +350,9 @@ Within those, in descending order of how much weight they will bear:
 | A differential-execution `ran-unprivileged` or `ran-with-failures` | **Yes, per repository**, which nothing else here is: the pipeline ran with nothing granted. Where the workflow holds no recognised test invocation it is a claim about the pull-request check and not about a test suite, and the output says which |
 | A differential-execution `secret-required` | **Only with the log line beside it.** It is a reading of the failing step's output, and the reading is heuristic where the positive case is not |
 | A differential-execution distribution | **No.** The sample is selected for what a local runner can execute, which is a selection on the properties under measurement. Report the per-repository outcomes, not a share |
+| `never-ran` over the pull-request-triggered subset | **Yes**, with the `unknown` count beside it and the words "upstream" in the sentence. It is the one figure here that qualifies every other one: a declared pipeline that has never run is configuration the rest of the tool counted and nothing more |
+| A single repository's `passing` or `failing` | **Only with the recency window.** It describes the newest concluded run inside that window, not the pipeline's record |
+| A `fidelity-gap` or `dead-pipeline` control reading | **Yes, per repository.** It is what decides whether a differential-execution environment failure says anything about the local runner |
 | Any single repository's label | **No.** It is a hint. Read its `signals`. |
 | Anything from `--limit`, a GitLab sample, or a partial cache | **No.** Every such output marks itself partial, loudly |
 
