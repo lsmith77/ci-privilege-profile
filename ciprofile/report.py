@@ -13,6 +13,7 @@ THE OUTPUT FILES, AND WHY THEY REFUSE TO OVERWRITE EACH OTHER BY NAME
     ci_cache.json                the evidence, never a profile
     fork_pr_profile.json         the fork observation
     differential_execution.json  the differential-execution run
+    ci_activity_profile.json     the upstream CI activity sweep
 
 A sweep of a sizeable corpus costs hours, so a mode that overwrote another
 mode's output would destroy a run in progress with no error anywhere. Each
@@ -38,9 +39,10 @@ FROM_CACHE_NAME = "ci_profile_from_cache.json"
 CACHE_NAME = "ci_cache.json"
 FORK_NAME = "fork_pr_profile.json"
 DIFFERENTIAL_NAME = "differential_execution.json"
+ACTIVITY_NAME = "ci_activity_profile.json"
 ALL_OUTPUT_NAMES = frozenset(
     [PROFILE_NAME, FROM_CACHE_NAME, CACHE_NAME, FORK_NAME,
-     DIFFERENTIAL_NAME])
+     DIFFERENTIAL_NAME, ACTIVITY_NAME])
 
 
 def refuse_overwrite(path, own):

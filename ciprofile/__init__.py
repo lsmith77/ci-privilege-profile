@@ -19,5 +19,7 @@ approaches are worth trying.
     fixtures.py    the offline corpus and its expectation table
     differential.py  running the pipeline with nothing granted, and what a
                    failure is allowed to be read as
+    ci_activity.py whether the declared pipeline ever ran upstream, which is
+                   also the control for the above
     sources/       one adapter per forge, behind one interface
 """
