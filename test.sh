@@ -29,8 +29,8 @@ echo "  ok    $(ls ciprofile/*.py ciprofile/sources/*.py tests/*.py | wc -l | tr
 
 echo "--- every module imports with no credentials and no network"
 for m in structure rules classify sweep cache report fixtures fork_observation \
-         differential sources sources.base sources.forgejo sources.gitlab \
-         sources.github sources.local; do
+         differential ci_activity sources sources.base sources.forgejo \
+         sources.gitlab sources.github sources.local; do
   if env -u FORGE_URL -u FORGE_TOKEN -u GITLAB_URL -u GITHUB_TOKEN \
        -u GH_TOKEN "$PY" -c "import ciprofile.$m" >/dev/null 2>&1
   then echo "  ok    ciprofile.$m"
@@ -61,6 +61,21 @@ for args in "" "--profile /nonexistent --cache /nonexistent" \
     *Traceback*) echo "  FAIL  differential '$args' refuses with a traceback"
                  fail=1 ;;
     *)           echo "  ok    differential '${args:-no arguments}' refuses" ;;
+  esac
+done
+
+echo "--- the activity sweep refuses before it asks a forge anything"
+# A corpus of mirrors cannot be asked about under the mirrors' own names, so
+# the mapping is required rather than defaulted. Checked from the command line
+# as well as from the unit checks, because this is the spelling a person types.
+for args in "" "--profile /nonexistent" "--fork /nonexistent"; do
+  out=$(env -u GITHUB_TOKEN -u GH_TOKEN "$PY" -m ciprofile.ci_activity $args \
+        2>&1); rc=$?
+  case "$rc:$out" in
+    0:*)         echo "  FAIL  ci_activity '$args' exits zero"; fail=1 ;;
+    *Traceback*) echo "  FAIL  ci_activity '$args' refuses with a traceback"
+                 fail=1 ;;
+    *)           echo "  ok    ci_activity '${args:-no arguments}' refuses" ;;
   esac
 done
 
