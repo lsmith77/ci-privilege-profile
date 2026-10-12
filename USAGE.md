@@ -189,6 +189,16 @@ that it has not seen before, so a sample whose repositories want different
 toolchain versions costs more than one that shares them. A first run of eight
 repositories therefore wants single-digit gigabytes, not tens.
 
+**Measured, on a run of 19 repositories: about 11 GB.** The daemon's growth
+headroom went from 58.2 GB to 47.1 GB over that run. Plan with that for a
+sample of this size rather than dividing it by the repository count: what grows
+across a run is the toolcache, by whatever the sample's repositories do not
+already share, so the cost does not scale with how many of them there are. Nine
+of that run's records were failures that took a tenth of a second each, so for
+a sample that actually runs the figure is if anything light. It is also why the
+10 GB below is a floor and not a budget: one run of this size consumed more
+than the whole of it.
+
 **That is not the figure to plan around.** The run refuses to start below **10
 GB of growth headroom for the container daemon**, and re-reads the figure
 between repositories, because the machine is the risk and not this tool's
