@@ -136,8 +136,8 @@ three of which answer it:
 | `ran-with-failures` | a project command executed and failed on its own merits. Still an answer: the pipeline reached the project's own code with nothing granted |
 | `secret-required` | the failing step's own output names a missing, empty or rejected credential |
 | `environment-failure` | it failed for a reason belonging to the runner. **Proves nothing** |
-| `timed-out` | the per-repository budget ran out. **Proves nothing** |
-| `not-attempted` | the clone failed, or no job was found. **Proves nothing** |
+| `timed-out` | that workflow file's own budget ran out. **Proves nothing** |
+| `not-attempted` | the clone failed, no job was found, or the repository's ceiling was already spent when the file came up, so nothing was run for it. **Proves nothing** |
 
 The classification of *failures* is heuristic and the positive case is not.
 `ran-unprivileged` holds because no secret file is read, no secret is passed,
@@ -155,7 +155,8 @@ the credentials axis holds to.
 | no secrets file, in any spelling | the runner's *default* is to read `.secrets` from its working directory, which here is a clone of somebody else's repository. It is pointed at the null device, and the command line has no flag that could supply one |
 | the runner's working directory is never the clone | it reads an `.actrc` out of its working directory, so a file in the corpus could otherwise add flags to the command measuring it |
 | the host's container daemon is withheld from the workflow container | the runner mounts it by default, which would hand a third-party pipeline control of the daemon running it |
-| `--timeout`, per repository, defaulted and overridable | 20 minutes by default, which is generous on purpose: a budget tight enough to cut a real run turns the measurement into a measurement of the host |
+| `--timeout`, charged **per workflow file**, defaulted and overridable | 15 minutes by default, which is generous on purpose: a budget tight enough to cut a real run turns the measurement into a measurement of the host. Per file rather than per repository because the question is asked of a file, and a shared budget lets one slow workflow decide its siblings' answers |
+| `--repo-ceiling`, on one repository's files together | an hour by default, so a repository with many slow workflows cannot hold the whole run. It is a ceiling and not a budget: nothing is cut short by it, and a file it leaves no room for is recorded as `not-attempted` rather than as `timed-out`, because nothing was run for that file and a timeout it did not have is a record of a run that never happened |
 | the clone is temporary and removed in a `finally` | including when the runner raised, so a failed run leaves nothing of somebody else's repository behind |
 | the daemon's growth headroom is checked before the first repository and again between each of them, and refuses below a 10 GB floor unless `ALLOW_LOW_DISK=1` | the risk is the machine rather than this tool's own appetite. Below the floor mid-run it stops with the results it already has, because a short run whose results survive is worth more than a long one that dies on a full disk. What it cannot see is a daemon that is internally full, which the Disk notes below set out |
 | one at a time, with pacing between clones | the clones come from a mirror rather than from the upstream host, and a mirror on a constrained allocation finds a clone far more expensive than an API read |

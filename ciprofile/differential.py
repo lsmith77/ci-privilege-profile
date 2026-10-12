@@ -48,9 +48,11 @@ THE SIX OUTCOMES, AND WHICH OF THEM PROVE ANYTHING
     environment-failure   it failed before the project's commands, for a
                           reason belonging to the runner and not the pipeline.
                           PROVES NOTHING.
-    timed-out            the per-repository budget ran out. PROVES NOTHING.
-    not-attempted        the clone failed, or the runner found no job to run.
-                          PROVES NOTHING.
+    timed-out            that workflow file's own budget ran out. PROVES
+                          NOTHING.
+    not-attempted        the clone failed, the runner found no job to run, or
+                          the repository's ceiling was already spent when this
+                          file came up, so nothing was run. PROVES NOTHING.
 
 **The positive case is not heuristic and the failure cases are.**
 `ran-unprivileged` rests on an absence that is enforced by construction rather
@@ -145,7 +147,11 @@ OUTCOMES = ANSWERS + PROVES_NOTHING
 # unanswered, because the question is what a contributor has to be able to run
 # and that is every check their pull request sets off, not the cheapest one.
 # A secret-related failure outranks everything, so a privilege stays visible.
-AGGREGATE_PRECEDENCE = (SECRET_REQUIRED, NOT_ATTEMPTED, TIMED_OUT,
+# A budget that ran out outranks a file that was never attempted, because the
+# two only ever meet in one case: a repository whose ceiling was spent by its
+# earlier files. That repository ran out of time, and saying it was never
+# attempted would describe the files instead of the repository.
+AGGREGATE_PRECEDENCE = (SECRET_REQUIRED, TIMED_OUT, NOT_ATTEMPTED,
                         ENVIRONMENT_FAILURE, RAN_WITH_FAILURES,
                         RAN_UNPRIVILEGED)
 
@@ -268,14 +274,36 @@ ACTION_STEP_NAME = re.compile(r"^[\w.-]+/[\w.-]+@|^(?:\./|docker://)")
 SAMPLE_CEILING = 12
 LARGE_SAMPLE_ENV = "ALLOW_LARGE_SAMPLE"
 
-# The per-repository budget, shared across that repository's workflow files.
-# 20 minutes, chosen against measurement rather than taste: on an ARM host the
+# The budget for ONE WORKFLOW FILE, not for the repository holding it. Charging
+# it per repository was measured and it was wrong: a repository's slowest file
+# spent the budget its siblings needed, so every file after the slow one was
+# cut short or never started, and a repository read as unanswered because of
+# the order its files happened to be in. The unit the question is asked of is
+# the workflow file, so the unit the budget is charged to is the workflow file.
+#
+# 15 minutes, chosen against measurement rather than taste: on an ARM host the
 # runner image is amd64 and runs under emulation, where a dependency install
 # that takes a minute natively takes several, and the first run of a corpus
-# also pays for the image pull. A budget tight enough to cut a real run turns
-# a measurement into a measurement of the host, so it is generous and it is
+# also pays for the image pull. Measured runs were killed at 390 and 448
+# seconds against a 420 second budget, which is a measurement of the budget and
+# not of the pipeline. A budget tight enough to cut a real run turns a
+# measurement into a measurement of the host, so it is generous and it is
 # overridable in both directions.
-TIMEOUT_DEFAULT = 1200
+TIMEOUT_DEFAULT = 900
+
+# And a ceiling on one repository's files together, so a repository with many
+# slow workflows cannot hold the whole run. It is a CEILING AND NOT A BUDGET:
+# nothing is cut short by it. A file is attempted only where a full budget
+# still fits underneath it, and a file that does not fit is recorded as
+# not-attempted, because a file nothing was run for did not time out and
+# counting it as a timeout inflates the one class whose cause is the clock.
+# Four full budgets, which is more files than any repository at the head of the
+# selection order carries, that order being by workflow-file count ascending.
+REPO_CEILING_DEFAULT = 3600
+CEILING_NOT_ATTEMPTED = (
+    "nothing was run for this file: the repository's {}s ceiling was already "
+    "spent by the files before it, and a file that was never attempted is not "
+    "a file whose budget ran out")
 
 # Seconds between clones. The mirror this was built against runs on a
 # constrained CPU allocation, and a clone is far more expensive for it than a
@@ -1071,7 +1099,7 @@ def classify_outcome(exit_code, log, timed_out=False, started=True):
        classes that carry a claim are reached only by a pattern that matched.
     """
     if timed_out:
-        return TIMED_OUT, "the per-repository budget ran out", ""
+        return TIMED_OUT, "this workflow file's own budget ran out", ""
     steps = read_steps(log)
     if not started or not steps:
         return (NOT_ATTEMPTED if not started else ENVIRONMENT_FAILURE,
@@ -1264,7 +1292,7 @@ def _stop_session(proc, grace=None, log=print):
     return out or b""
 
 
-def plan(chosen, timeout, arch, runner=RUNNER):
+def plan(chosen, timeout, arch, runner=RUNNER, ceiling=REPO_CEILING_DEFAULT):
     """What is about to run, printed before anything does.
 
     A person who asked for eight repositories and is about to have eight
@@ -1276,8 +1304,9 @@ def plan(chosen, timeout, arch, runner=RUNNER):
                  len(chosen)),
              "this runs third-party code: each pipeline is a script its "
              "maintainers wrote for infrastructure they chose.",
-             "budget {}s per repository, {}s between clones, one at a time."
-             .format(timeout, CLONE_PACE),
+             "budget {}s per workflow file, a {}s ceiling per repository, "
+             "{}s between clones, one at a time."
+             .format(timeout, max(ceiling, timeout), CLONE_PACE),
              ""]
     for row in chosen:
         lines.append("  {}  [{}]  {}".format(
@@ -1289,14 +1318,23 @@ def plan(chosen, timeout, arch, runner=RUNNER):
     return "\n".join(lines)
 
 
-def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
-            pace=CLONE_PACE, runner=RUNNER, log=print, space=None,
-            floor=DISK_FLOOR, allow_low=None, clone_fn=None, run_fn=None):
+def execute(chosen, timeout=TIMEOUT_DEFAULT, ceiling=REPO_CEILING_DEFAULT,
+            arch="linux/amd64", pace=CLONE_PACE, runner=RUNNER, log=print,
+            space=None, floor=DISK_FLOOR, allow_low=None, clone_fn=None,
+            run_fn=None, now=None):
     """Run the sample. (records, the interruption that stopped it, or None).
 
     The clone lives in a temporary directory that is removed in a `finally`,
     including when the runner raised, so a failed run leaves nothing of
     somebody else's repository on the host.
+
+    `timeout` IS CHARGED PER WORKFLOW FILE and `ceiling` bounds the repository
+    they belong to. Every file that is attempted gets the whole budget, so a
+    slow sibling cannot shorten it, and a file the ceiling leaves no room for
+    is recorded as not-attempted rather than as timed out: nothing was run for
+    it, and a timeout it did not have is a record of a run that never
+    happened. The first file always gets its full budget, because a ceiling
+    below one budget would otherwise attempt nothing at all.
 
     A RUN THAT STOPS EARLY WITH ITS RESULTS INTACT BEATS ONE THAT DIES WITH
     NONE. The disk is re-read between repositories rather than trusted from
@@ -1308,13 +1346,16 @@ def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
     five is not. The floor and the escape hatch are the preflight's own, so
     there is one figure to argue with rather than two.
 
-    `space`, `clone_fn` and `run_fn` are injection points, for the same reason
-    `find_runner` takes `ask`: a check that had to fill a disk and start a
-    container to exercise the stop is a check nobody runs.
+    `space`, `clone_fn`, `run_fn` and `now` are injection points, for the same
+    reason `find_runner` takes `ask`: a check that had to fill a disk, start a
+    container and then wait out an hour of budget to exercise the stop and the
+    ceiling is a check nobody runs.
     """
     space = (lambda: disk_headroom()[0]) if space is None else space
     clone_fn = clone if clone_fn is None else clone_fn
     run_fn = run_workflow if run_fn is None else run_fn
+    now = time.time if now is None else now
+    ceiling = max(ceiling, timeout)
     records, interruption = [], None
     for i, row in enumerate(chosen):
         if i:
@@ -1337,20 +1378,29 @@ def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
         log("[{}/{}] {}".format(i + 1, len(chosen), row["repo"]))
         record = dict(row)
         record["runs"] = []
-        started = time.time()
+        started = now()
         workdir = tempfile.mkdtemp(prefix="ciprofile-diff-")
         try:
             target = os.path.join(workdir, "repo")
             if not clone_fn(row["repo"], target, log=log):
                 record["outcome"] = NOT_ATTEMPTED
                 record["reason"] = "the clone failed"
-                record["seconds"] = round(time.time() - started, 1)
+                record["seconds"] = round(now() - started, 1)
                 records.append(record)
                 continue
             for workflow in row["workflows"]:
-                budget = max(1, timeout - (time.time() - started))
+                if now() - started + timeout > ceiling:
+                    record["runs"].append({
+                        "workflow": workflow, "outcome": NOT_ATTEMPTED,
+                        "reason": CEILING_NOT_ATTEMPTED.format(ceiling),
+                        "evidence": "", "seconds": 0.0})
+                    log("    {}  {}  (the repository's {}s ceiling left no "
+                        "room, so nothing ran)".format(
+                            os.path.basename(workflow), NOT_ATTEMPTED,
+                            ceiling))
+                    continue
                 outcome, reason, evidence, seconds, _text = run_fn(
-                    target, os.path.join(target, workflow), budget,
+                    target, os.path.join(target, workflow), timeout,
                     arch=arch, runner=runner, log=log)
                 log("    {}  {}  ({}s)".format(
                     os.path.basename(workflow), outcome, seconds))
@@ -1365,7 +1415,7 @@ def execute(chosen, timeout=TIMEOUT_DEFAULT, arch="linux/amd64",
             record["reason"] = next(
                 (r["reason"] for r in record["runs"]
                  if r["outcome"] == record["outcome"]), "")
-            record["seconds"] = round(time.time() - started, 1)
+            record["seconds"] = round(now() - started, 1)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         records.append(record)
@@ -1400,6 +1450,11 @@ COMMENT = (
     "false, no command form the static rules recognise as a test invocation "
     "is in the workflow, so a clean run is evidence about the pull-request "
     "check a contributor triggers and NOT about a test suite behind it. "
+    "`workflow_timeout_seconds` is charged PER WORKFLOW FILE, so a slow file "
+    "does not shorten its siblings, and `repository_ceiling_seconds` bounds "
+    "one repository's files together. A file the ceiling left no room for is "
+    "recorded as not-attempted and never as timed-out: nothing was run for "
+    "it, so a timeout would be a record of a run that never happened. "
     "`selection` carries the rule the sample was chosen by. It is not a "
     "random sample and nothing here extrapolates to any corpus: the rule "
     "selects for what a local runner can execute, which is a selection on the "
@@ -1479,8 +1534,14 @@ def build_parser():
                    help="how many repositories to execute. Required, with no "
                         "default, because each one runs third-party code")
     p.add_argument("--timeout", type=int, default=TIMEOUT_DEFAULT,
-                   help="per-repository budget in seconds (default %d)"
-                        % TIMEOUT_DEFAULT)
+                   help="budget in seconds for one workflow file, charged per "
+                        "file so a slow one does not shorten its siblings "
+                        "(default %d)" % TIMEOUT_DEFAULT)
+    p.add_argument("--repo-ceiling", type=int, default=REPO_CEILING_DEFAULT,
+                   help="ceiling in seconds on one repository's files "
+                        "together. A file it leaves no room for is recorded "
+                        "as not-attempted, never as timed out (default %d)"
+                        % REPO_CEILING_DEFAULT)
     p.add_argument("--arch", default="linux/amd64",
                    help="container architecture. linux/amd64 on an ARM host, "
                         "where the runner images are amd64 and run emulated")
@@ -1521,7 +1582,8 @@ def main(argv=None):
         "cache": os.path.abspath(args.cache),
         "clone_from": MIRROR_CLONE.format("<owner>/<name>"),
     }
-    print(plan(chosen, args.timeout, args.arch, runner=runner or RUNNER))
+    print(plan(chosen, args.timeout, args.arch, runner=runner or RUNNER,
+               ceiling=args.repo_ceiling))
     print("runner: {}\n".format(version_text))
     started_with, read_from, limitation = disk_headroom()
     print("container daemon growth headroom: {}  ({})".format(
@@ -1546,6 +1608,7 @@ def main(argv=None):
     out_path = os.path.join(args.out, DIFFERENTIAL_NAME)
     refuse_overwrite(out_path, DIFFERENTIAL_NAME)
     records, interruption = execute(chosen, timeout=args.timeout,
+                                    ceiling=args.repo_ceiling,
                                     arch=args.arch, runner=runner)
     ended_with, read_from_end, limitation_end = disk_headroom()
     summarise(records, interruption=interruption)
@@ -1555,7 +1618,8 @@ def main(argv=None):
     write(out_path, records, selection, {
         "runner": "{} ({})".format(version_text, runner),
         "runner_version": ".".join(str(n) for n in version),
-        "timeout_seconds": args.timeout,
+        "workflow_timeout_seconds": args.timeout,
+        "repository_ceiling_seconds": max(args.repo_ceiling, args.timeout),
         "architecture": args.arch,
         "secrets_supplied": "none, by construction: no secret file is read, "
                             "no secret is passed, credential-shaped variables "
@@ -1582,14 +1646,15 @@ def main(argv=None):
 
 
 __all__ = ["ANSWERS", "DISK_FLOOR", "DOCKER_READ_ONLY", "OUTCOMES",
-           "PROVES_NOTHING", "RUNNER_MIN",
-           "SELECTION_RULE", "aggregate", "assert_no_secret",
+           "PROVES_NOTHING", "REPO_CEILING_DEFAULT", "RUNNER_MIN",
+           "SELECTION_RULE", "TIMEOUT_DEFAULT", "aggregate",
+           "assert_no_secret",
            "build_parser", "classify_outcome", "disk_headroom", "docker_read",
            "execute", "find_runner", "gb", "low_disk_allowed",
            "main", "plan",
            "read_steps", "reclaim_report", "reclaimable", "require_disk",
            "require_sample", "runner_argv", "runner_version",
-           "scrubbed_env", "select", "summarise", "write"]
+           "scrubbed_env", "select", "summarise", "unrunnable_scope", "write"]
 
 if __name__ == "__main__":
     sys.exit(main())
