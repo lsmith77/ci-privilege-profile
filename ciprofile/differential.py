@@ -89,10 +89,12 @@ WHAT THE RUNNER IS, AND WHAT THAT COSTS
 ---------------------------------------
 `act` runs GitHub Actions workflows locally. It reads no other grammar, so a
 GitLab, Woodpecker or Jenkins pipeline cannot be sampled here at all, and that
-is a selection constraint rather than a limitation of the method. On an
-ARM host the runner images are amd64 and run under emulation, which is slow
-enough to dominate the per-repository cost and to make TIMEOUT_DEFAULT a real
-constraint rather than a safety net.
+is a selection constraint rather than a limitation of the method. It is also
+handed one event, `pull_request`, so a scope holding nothing that event can
+start is excluded at selection rather than cloned and run: see
+unrunnable_scope(). On an ARM host the runner images are amd64 and run under
+emulation, which is slow enough to dominate the per-file cost and to make
+TIMEOUT_DEFAULT a real constraint rather than a safety net.
 """
 import argparse
 import json
@@ -114,6 +116,12 @@ from ciprofile.rules import (CREDENTIALS_UNCLEAR, NO_PIPELINE,     # noqa: E402
                              NO_PULL_REQUEST_TRIGGER, SPECIAL_ENV,
                              TEST_INVOCATION, TEST_STEP_UNIDENTIFIED,
                              TOOLCHAIN_PREFIX)
+# The same set the GitHub adapter keeps out of the denominator, imported
+# rather than restated: two copies of this list is how the selection comes to
+# execute a repository the corpus does not even count.
+from ciprofile.sources.github import PROFILE_REPO_NAMES           # noqa: E402
+from ciprofile.structure import (actions_triggers,                # noqa: E402
+                                 strip_comments)
 
 # ------------------------------------------------------------ the outcomes
 
@@ -430,6 +438,14 @@ MIRROR_CLONE = "https://git.opencode.swiss/{}.git"
 # than the first is the difference between measuring the corpus and measuring
 # the PATH order.
 RUNNER = "act"
+# The one event the runner is given, named here because two places depend on
+# it: the command line it is invoked with, and the selection rule that refuses
+# a scope holding nothing this event can start. Letting those drift is how a
+# repository gets cloned for a run that could not have begun.
+RUNNER_EVENT = "pull_request"
+# A reusable workflow is declared, not triggered. The runner has no way to
+# invoke one standalone, whatever event it is handed.
+REUSABLE_TRIGGER = "workflow_call"
 RUNNER_MIN = (0, 2, 50)
 RUNNER_MIN_REASON = (
     "older runners refuse every action built on a Node runtime newer than "
@@ -443,6 +459,9 @@ RUNNER_MIN_REASON = (
 SELECTION_RULE = [
     "the pull-request scope has a pipeline (its primary class is neither "
     "no-pipeline nor no-pull-request-trigger)",
+    "not an organisation profile repository: a `.github` or equivalent "
+    "repository holds no software, and the corpus denominator leaves it out "
+    "already",
     "static reading left it unresolved: the pull-request scope carries "
     "credentials-unclear or test-step-unidentified, which are the two bands "
     "execution exists to narrow",
@@ -452,6 +471,11 @@ SELECTION_RULE = [
     "because the runner reads no other grammar",
     "no text in those files asking for an excluded environment: a Windows or "
     "macOS runner image, a self-hosted label, or nested virtualisation",
+    "something the runner's own event can start: a scope whose every file is "
+    "a workflow_call reusable workflow cannot be invoked standalone, and a "
+    "scope where no file declares the pull-request event leaves the runner no "
+    "job to find. Both fail in a tenth of a second and both are decidable "
+    "from the cached text, so neither is cloned",
     "a recognised toolchain among the scope's signals (node, python, go or "
     "java), so a first sample is spent on cases where a failure is "
     "interpretable",
@@ -482,11 +506,53 @@ EXCLUDED_ENV = re.compile(
     r"|docker:[\d.]*-?dind|\bdind\b|--privileged|/dev/kvm|qemu-system"
     r"|\bvagrant\b|nested-virt", re.I)
 
+# The funnel's own keys, named rather than spelled at each site, so a reason
+# the checks assert on and a reason the output records cannot drift apart.
+DROP_PROFILE_REPO = "an organisation profile repository, not software"
+DROP_REUSABLE_ONLY = (
+    "every workflow is a reusable workflow the runner cannot invoke")
+DROP_NO_RUNNER_EVENT = (
+    "no workflow declares the pull-request event the runner is given")
+
 
 def workflow_paths(profile_scope):
     """The pull-request scope's GitHub Actions workflow files."""
     return [p for p in profile_scope.get("files", [])
             if "/workflows/" in p]
+
+
+def unrunnable_scope(workflows, texts):
+    """Why the runner could not start this scope at all, or None.
+
+    THE FAILURE IS CERTAIN AND IT IS CERTAIN BEFORE THE CLONE. A scope with
+    nothing the runner's one event can start exits in a tenth of a second with
+    "Could not find any stages to run", which is recorded as an environment
+    failure and claims nothing. A measured run of 19 repositories spent nine of
+    its records that way, on two repositories. Both were decidable from the
+    cached pipeline text, so both belong in the funnel as a drop with a reason
+    rather than in the distribution as a mystery.
+
+    Two readings, in this order, because the causes differ. A reusable
+    workflow cannot be invoked standalone whatever event is handed to the
+    runner, and that is worth saying on its own; anything else here is a scope
+    whose files declare some other event, `pull_request_target` being the one
+    that occurs, which the runner would need a different invocation to reach.
+
+    THE WHOLE SCOPE IS THE UNIT, not the file: one `pull_request` workflow
+    beside four reusable ones has something to run, and the four are the
+    callees. And an unreadable `on:` keeps the benefit of the doubt, for the
+    reason structure.in_pull_request_scope() gives it: a file that did not say
+    so in a shape either reading handles is not a file to drop on a guess.
+    """
+    triggers = [actions_triggers(strip_comments(texts.get(p, "")))
+                for p in workflows]
+    if not triggers or any(t is None for t in triggers):
+        return None
+    if any(RUNNER_EVENT in t for t in triggers):
+        return None
+    if all(REUSABLE_TRIGGER in t for t in triggers):
+        return DROP_REUSABLE_ONLY
+    return DROP_NO_RUNNER_EVENT
 
 
 def select(profile, cache, sample):
@@ -507,6 +573,9 @@ def select(profile, cache, sample):
         pr = prof.get(PR_SCOPE, {})
         if pr.get("primary") in ABSENT:
             continue                      # not a candidate at all, not a drop
+        if key.split("/")[-1] in PROFILE_REPO_NAMES:
+            drop(DROP_PROFILE_REPO)
+            continue
         flags = set(pr.get("flags", []))
         if not flags & set(UNRESOLVED):
             drop("resolved by static reading")
@@ -524,6 +593,10 @@ def select(profile, cache, sample):
         joined = "\n".join(texts.get(p, "") for p in workflows)
         if EXCLUDED_ENV.search(joined):
             drop("asks for an environment the runner cannot provide")
+            continue
+        unrunnable = unrunnable_scope(workflows, texts)
+        if unrunnable:
+            drop(unrunnable)
             continue
         signals = set(pr.get("signals", []))
         if not signals & set(WANTED_TOOLCHAINS):
@@ -869,7 +942,7 @@ def runner_argv(clone, workflow, arch="linux/amd64", runner=RUNNER):
     socket costs the host.
     """
     return [
-        runner, "pull_request",
+        runner, RUNNER_EVENT,
         "-C", clone,
         "-W", workflow,
         "--secret-file", os.devnull,
