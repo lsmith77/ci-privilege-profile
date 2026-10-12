@@ -958,8 +958,16 @@ def _corpus():
         return {"primary": primary, "flags": flags, "signals": signals,
                 "files": files}
     wf = ".github/workflows/ci.yml"
+    wf2 = ".github/workflows/release.yml"
     clean = ("on:\n  pull_request:\njobs:\n  t:\n    runs-on: ubuntu-latest\n"
              "    steps:\n      - run: npm test\n")
+    # The two shapes the runner cannot start. Both are given everything else
+    # the rule wants, so that removing the exclusion puts them in the sample
+    # rather than leaving them for a later rule to catch.
+    reusable = clean.replace("on:\n  pull_request:", "on:\n  workflow_call:")
+    only_target = clean.replace("on:\n  pull_request:",
+                                "on:\n  pull_request_target:\n"
+                                "  workflow_dispatch:")
     profile = {"repos": {
         "a/unclear": {
             "pull_request": scope("read-credential", ["read-credential",
@@ -1017,6 +1025,26 @@ def _corpus():
         "h/nopipeline": {
             "pull_request": scope("no-pipeline", ["no-pipeline"], [], []),
             "repository": scope("no-pipeline", ["no-pipeline"], [], [])},
+        "i/reusable": {
+            "pull_request": scope("self-contained",
+                                  ["self-contained",
+                                   "test-step-unidentified"],
+                                  ["toolchain-node"], [wf, wf2]),
+            "repository": scope("self-contained", ["self-contained"], [],
+                                [wf, wf2])},
+        "j/onlytarget": {
+            "pull_request": scope("self-contained",
+                                  ["self-contained",
+                                   "test-step-unidentified"],
+                                  ["toolchain-node"], [wf]),
+            "repository": scope("self-contained", ["self-contained"], [],
+                                [wf])},
+        "k/.github": {
+            "pull_request": scope("read-credential", ["read-credential",
+                                                      "credentials-unclear"],
+                                  ["toolchain-node"], [wf]),
+            "repository": scope("read-credential", ["read-credential"], [],
+                                [wf])},
     }}
     cache = {"repos": {
         "a/unclear": {"files": {wf: clean}},
@@ -1029,6 +1057,9 @@ def _corpus():
         "g/notoolchain": {"files": {wf: clean}},
         "a/zz-second": {"files": {wf: clean}},
         "h/nopipeline": {"files": {}},
+        "i/reusable": {"files": {wf: reusable, wf2: reusable}},
+        "j/onlytarget": {"files": {wf: only_target}},
+        "k/.github": {"files": {wf: clean}},
     }}
     return profile, cache
 
@@ -1051,6 +1082,139 @@ def selection_keeps_only_what_execution_can_decide():
     assert rejected["no recognised toolchain"] == 1, rejected
     assert rejected["a second repository from one owner"] == 1, rejected
     assert "h/nopipeline" not in names
+
+
+def a_scope_the_runner_cannot_start_is_never_cloned():
+    """The failure is certain, and it is certain from the cached text.
+
+    A scope with nothing the runner's one event can start exits in a tenth of
+    a second with "Could not find any stages to run", which lands in the
+    distribution as an environment failure and claims nothing. A measured run
+    of 19 repositories spent nine of its records that way. So it is a drop
+    with a reason in the funnel instead, and the reason distinguishes the two
+    causes: a reusable workflow cannot be invoked standalone at all, where a
+    scope declaring only `pull_request_target` would need a different
+    invocation.
+    """
+    profile, cache = _corpus()
+    chosen, rejected = D.select(profile, cache, 10)
+    names = [r["repo"] for r in chosen]
+    assert "i/reusable" not in names, names
+    assert "j/onlytarget" not in names, names
+    assert rejected[D.DROP_REUSABLE_ONLY] == 1, rejected
+    assert rejected[D.DROP_NO_RUNNER_EVENT] == 1, rejected
+    # And the decision is the scope's, not the file's: one file the event can
+    # start keeps the scope, the reusable ones beside it being its callees.
+    texts = cache["repos"]["i/reusable"]["files"]
+    workflows = sorted(texts)
+    assert D.unrunnable_scope(workflows, texts) == D.DROP_REUSABLE_ONLY
+    mixed = dict(texts)
+    mixed[workflows[0]] = cache["repos"]["a/unclear"]["files"][
+        ".github/workflows/ci.yml"]
+    assert D.unrunnable_scope(workflows, mixed) is None
+    # An unreadable `on:` keeps the benefit of the doubt, which is the
+    # direction in_pull_request_scope() reads an unreadable trigger in too.
+    assert D.unrunnable_scope(["x.yml"], {"x.yml": "on: ${{ matrix.on }}\n"}) \
+        is None
+    # The event the rule is written against is the one the runner is given.
+    assert D.runner_argv("/c", "/c/w.yml")[1] == D.RUNNER_EVENT
+
+
+def an_organisation_profile_repository_is_excluded():
+    """It holds no software, and the corpus denominator leaves it out already.
+
+    Two copies of that list is how the selection comes to execute a repository
+    the corpus does not even count, so the set is the adapter's own and the
+    check asserts that rather than a local spelling of it.
+    """
+    profile, cache = _corpus()
+    chosen, rejected = D.select(profile, cache, 10)
+    assert "k/.github" not in [r["repo"] for r in chosen], chosen
+    assert rejected[D.DROP_PROFILE_REPO] == 1, rejected
+    assert ".github" in D.PROFILE_REPO_NAMES, D.PROFILE_REPO_NAMES
+    from ciprofile.sources import github as gh
+    assert D.PROFILE_REPO_NAMES is gh.PROFILE_REPO_NAMES
+
+
+def the_budget_is_charged_per_workflow_file():
+    """A slow workflow does not spend the budget its siblings need.
+
+    Charging it per repository was measured and it was wrong: the files after
+    a slow one were cut short or never started, so a repository's answer
+    depended on the order its files happened to be in. The clock is injected,
+    so the check costs no wall time at all.
+    """
+    clock = [1000.0]
+
+    def run_fn(clone_dir, workflow, budget, arch=None, runner=None, log=print):
+        handed.append(budget)
+        clock[0] += 600                      # each one eats most of a budget
+        return D.RAN_UNPRIVILEGED, "every step ran", "", 600.0, ""
+
+    handed = []
+    chosen = [{"repo": "a/one", "owner": "a",
+               "workflows": [".github/workflows/{}.yml".format(n)
+                             for n in "abc"],
+               "unresolved": ["credentials-unclear"],
+               "test_invocation_recognised": True}]
+    records, _interruption = D.execute(
+        chosen, timeout=900, ceiling=10 ** 6, pace=0, log=lambda _m: None,
+        clone_fn=lambda repo, into, log=print: True, run_fn=run_fn,
+        now=lambda: clock[0], space=lambda: D.DISK_FLOOR * 10)
+    assert handed == [900, 900, 900], handed
+    assert len(records[0]["runs"]) == 3, records[0]["runs"]
+    assert records[0]["outcome"] == D.RAN_UNPRIVILEGED, records[0]
+
+
+def a_file_the_ceiling_left_no_room_for_did_not_time_out():
+    """A run that never happened is not a run that ran out of time.
+
+    The old shape recorded every remaining file as timed out at a tenth of a
+    second, which inflated the one class whose cause is the clock with files
+    nothing was attempted for. They are not-attempted, which proves nothing
+    and says so, and the repository is still timed-out, because the repository
+    is what ran out of time.
+    """
+    clock = [1000.0]
+    attempted = []
+
+    def run_fn(clone_dir, workflow, budget, arch=None, runner=None, log=print):
+        attempted.append(workflow)
+        clock[0] += budget                  # each one spends its whole budget
+        return D.TIMED_OUT, "this workflow file's own budget ran out", "", \
+            float(budget), ""
+
+    chosen = [{"repo": "a/one", "owner": "a",
+               "workflows": [".github/workflows/{}.yml".format(n)
+                             for n in "abcd"],
+               "unresolved": ["credentials-unclear"],
+               "test_invocation_recognised": True}]
+    records, _interruption = D.execute(
+        chosen, timeout=900, ceiling=2000, pace=0, log=lambda _m: None,
+        clone_fn=lambda repo, into, log=print: True, run_fn=run_fn,
+        now=lambda: clock[0], space=lambda: D.DISK_FLOOR * 10)
+    runs = records[0]["runs"]
+    assert len(attempted) == 2, attempted
+    outcomes = [r["outcome"] for r in runs]
+    assert outcomes == [D.TIMED_OUT, D.TIMED_OUT,
+                        D.NOT_ATTEMPTED, D.NOT_ATTEMPTED], outcomes
+    for skipped in runs[2:]:
+        assert skipped["seconds"] == 0.0, skipped
+        assert "never attempted" in skipped["reason"], skipped
+        assert "2000" in skipped["reason"], skipped
+    # The repository ran out of time, and that is what it is recorded as: a
+    # file that was never attempted must not speak for the repository either.
+    assert records[0]["outcome"] == D.TIMED_OUT, records[0]["outcome"]
+    assert D.aggregate([D.TIMED_OUT, D.NOT_ATTEMPTED]) == D.TIMED_OUT
+    # A ceiling below one budget still attempts the first file, rather than
+    # recording a whole repository as unattempted.
+    clock[0], attempted[:] = 1000.0, []
+    records, _interruption = D.execute(
+        chosen, timeout=900, ceiling=1, pace=0, log=lambda _m: None,
+        clone_fn=lambda repo, into, log=print: True, run_fn=run_fn,
+        now=lambda: clock[0], space=lambda: D.DISK_FLOOR * 10)
+    assert len(attempted) == 1, attempted
+    assert records[0]["runs"][0]["outcome"] == D.TIMED_OUT, records[0]
 
 
 def the_sample_size_is_honoured_and_the_order_is_fixed():
@@ -1101,10 +1265,12 @@ def the_timeout_is_defaulted_and_overridable():
         ["--profile", "p", "--cache", "c", "--sample", "3"])
     assert parsed.timeout == D.TIMEOUT_DEFAULT, parsed.timeout
     assert parsed.sample == 3
+    assert parsed.repo_ceiling == D.REPO_CEILING_DEFAULT, parsed.repo_ceiling
     parsed = D.build_parser().parse_args(
         ["--profile", "p", "--cache", "c", "--sample", "3",
-         "--timeout", "60"])
+         "--timeout", "60", "--repo-ceiling", "120"])
     assert parsed.timeout == 60, parsed.timeout
+    assert parsed.repo_ceiling == 120, parsed.repo_ceiling
 
 
 def the_command_line_offers_no_way_to_pass_a_secret():
@@ -1203,13 +1369,21 @@ if __name__ == "__main__":
          aggregation_lets_one_unreadable_file_hold_the_repository),
         ("selection keeps only what execution can decide",
          selection_keeps_only_what_execution_can_decide),
+        ("a scope the runner cannot start is never cloned",
+         a_scope_the_runner_cannot_start_is_never_cloned),
+        ("an organisation profile repository is excluded",
+         an_organisation_profile_repository_is_excluded),
+        ("the budget is charged per workflow file",
+         the_budget_is_charged_per_workflow_file),
+        ("a file the ceiling left no room for did not time out",
+         a_file_the_ceiling_left_no_room_for_did_not_time_out),
         ("the sample size is honoured and the order is fixed",
          the_sample_size_is_honoured_and_the_order_is_fixed),
         ("a recognised test invocation is recorded as the caveat",
          a_recognised_test_invocation_is_recorded_as_the_caveat),
         ("the plan is printed before anything runs",
          the_plan_is_printed_before_anything_runs),
-        ("the per-repository timeout is defaulted and overridable",
+        ("the per-file budget and the repository ceiling are overridable",
          the_timeout_is_defaulted_and_overridable),
         ("the command line offers no way to pass a secret",
          the_command_line_offers_no_way_to_pass_a_secret),
