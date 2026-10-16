@@ -396,6 +396,9 @@ this corpus is a demonstrated local-environment failure.
 | Scope split: self-contained 91 to 158, `writes-outward` 206 to 67 | **Yes**; it is an effect size, not a share of any population |
 | Contributor-runnable | **Only as "between 50.8% and 93.3%"**. A single number there would be read as a measurement |
 | `credentials-unclear` 152 | **As a count of what the tool could not read**, yes. As a property of the corpus, no: it is partly a measure of the rule tables |
+| `read-credential` 47 / 86 | **Use the class, not the number.** On GitLab there is no `secrets.` namespace, so a masked variable is recognisable by its name alone. Credential-shaped suffixes are matched against an exception list of names that look like secrets and are not — cache keys above all, since a cache key computed into a variable moves a repository out of `self-contained` and into exactly this figure. That list holds exact names, so a prefixed spelling such as `NPM_CACHE_KEY` still over-claims, and an inline test password still reads as a credential |
+| `thin-wrapper` 12 | **Class only.** It asks whether every run step is a single invocation of a script or make target, so a contributor could reproduce the pipeline locally. It is a list of recognised command forms and stops at the first step it does not recognise, which makes the count a function of how complete that list is |
+| `special-env` 16 / 13 / 28 | **Class only.** It reads `runs-on:` values, matrix OS lists, container jobs and GitLab runner tags. Interpolated values do not match, GitLab's `image:` is deliberately not counted because a container is the normal mode there, and the boundary between an unusual runner shape and an ordinary image choice is a judgement rather than a measurement |
 | 17 proven of 1340 | **Yes as a floor**, with the reason it is low, which is the corpus and not the method |
 | 7 of 17 proven contradicting the classifier | **Yes**, as the direction of the error: the classifier over-claims |
 | 264 of 326 fork pull requests unchecked | **Yes, and only with the restriction in the same sentence** |
@@ -403,6 +406,8 @@ this corpus is a demonstrated local-environment failure.
 | **1,853 fork pull requests with no checks** | **No.** It counts pull requests to repositories with no pipeline for a check to come from |
 | Any single repository's label | **No.** It is a hint. Read its `signals` |
 | Anything as a share of "public sector open source" | **No.** This is one mirror set, not a sample of anything |
+
+The three class-only rows are held back for the same reason as each other: none has been checked against a labelled sample, so there is no basis for saying how far their counts are off or in which direction. Hand-classifying a few dozen repositories against them would settle whether each is promoted or retired, and that is cheaper than any further rule work.
 
 ## What this run cannot answer
 
